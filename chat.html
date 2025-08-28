@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Curevia Chat</title>
+  <style>
+    :root { --bg:#fff; --fg:#111; --muted:#666; --card:#f7f7f8; --line:#e8e8ea; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--fg); background:var(--bg); }
+    header { padding:14px 16px; border-bottom:1px solid var(--line); font-weight:600; }
+    .wrap { max-width:760px; margin:0 auto; height:100svh; display:flex; flex-direction:column; }
+    .chat { flex:1; display:flex; flex-direction:column; gap:10px; padding:14px 16px; overflow:auto; background:var(--bg); }
+    .msg { max-width:80%; padding:10px 12px; border-radius:12px; }
+    .bot { align-self:flex-start; background:var(--card); }
+    .me  { align-self:flex-end; background:#e7efff; }
+    .muted { color:var(--muted); font-size:12px; }
+    .quick { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0; }
+    .quick button { padding:8px 10px; border-radius:999px; border:1px solid var(--line); background:#fafafa; cursor:pointer }
+    form { display:flex; gap:8px; border-top:1px solid var(--line); padding:12px 12px; }
+    input[type="text"] { flex:1; padding:10px 12px; border-radius:10px; border:1px solid var(--line); }
+    button.send { padding:10px 14px; border-radius:10px; border:none; background:#111; color:#fff; cursor:pointer; }
+    .footer { padding:8px 16px; border-top:1px solid var(--line); background:var(--bg); }
+    a { color:inherit }
+  </style>
+</head>
+<body>
+  <div class="wrap" role="application" aria-label="Curevia chatt">
+    <header>Curevia – chatt</header>
+    <div id="thread" class="chat" aria-live="polite"></div>
+
+    <div class="footer">
+      <div class="muted">⚠️ Skriv inte in personnummer eller journaluppgifter.</div>
+      <div class="quick" aria-label="Snabbval">
+        <button data-prompt="Jag är vårdgivare. Vad kostar tjänsten?">Vårdgivare – pris</button>
+        <button data-prompt="Hur fungerar onboarding?">Onboarding</button>
+        <button data-prompt="Behöver jag eget bolag?">Eget bolag?</button>
+        <button data-prompt="Boka demo">Boka demo</button>
+      </div>
+    </div>
+
+    <form id="form" autocomplete="off" aria-label="Skicka meddelande">
+      <input id="input" type="text" placeholder="Skriv din fråga…" />
+      <button class="send" type="submit">Skicka</button>
+    </form>
+  </div>
+
+  <script>
+    // *** INSTÄLLNING: din endpoint (samma origin här) ***
+    const ENDPOINT = "/api/curevia-chat";
+
+    const thread = document.getElementById("thread");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+
+    function add(text, me=false) {
+      const d = document.createElement("div");
+      d.className = "msg " + (me ? "me" : "bot");
+      d.textContent = text;
+      thread.appendChild(d);
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    async function ask(q) {
+      if (!q.trim()) return;
+      add(q, true);
+      input.value = "";
+      try {
+        const r = await fetch(ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: q })
+        });
+        const data = await r.json();
+        add(data.reply || "Vill du boka en demo så visar jag mer?");
+      } catch (e) {
+        add("Tekniskt fel just nu. Testa igen eller boka en demo.");
+      }
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      ask(input.value);
+    });
+
+    document.querySelectorAll(".quick button").forEach(btn=>{
+      btn.addEventListener("click", ()=> ask(btn.dataset.prompt));
+    });
+
+    // Välkomstmeddelande
+    add("Hej! Jag kan hjälpa dig med frågor, registrering och demobokning. Vad vill du göra?");
+  </script>
+</body>
+</html>
