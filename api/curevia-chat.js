@@ -1,13 +1,14 @@
 // api/curevia-chat.js
 
 // ==== Config & constants ======================================================
-const OPENAI_API_KEY   = process.env.OPENAI_API_KEY;
-const OPENAI_API_BASE  = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
-const OPENAI_MODEL     = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;
+const OPENAI_API_BASE   = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
+const OPENAI_MODEL      = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const QUICK_ANSWERS_URL = process.env.QUICK_ANSWERS_URL || "";
-const MAX_INPUT_LEN    = 2000;            // hårt tak för user input
-const OPENAI_TIMEOUT_MS = 12000;          // abort om svar dröjer
-const RATE_LIMIT_PER_MIN = 40;            // per IP
+const CONTACT_WEBHOOK_URL = process.env.CONTACT_WEBHOOK_URL || ""; // valfri
+const MAX_INPUT_LEN     = 2000;            // hårt tak för user input
+const OPENAI_TIMEOUT_MS = 15000;           // abort om svar dröjer
+const RATE_LIMIT_PER_MIN = 40;             // per IP
 
 const LINKS = {
   demo: "https://calendly.com/tim-curevia/30min",
@@ -92,10 +93,13 @@ function detectIntent(text=""){
   const isConsult  = /(konsult|uppdrag|ersättn|timlön|bemann|legitimation|profil|sjuksköters|läkar)/.test(t);
   const wantsDemo  = /(demo|visa|boka|möte|genomgång)/.test(t);
   const wantsReg   = /(registrera|skapa konto|signa|ansök)/.test(t);
+  const wantsContact = /(kontakta|ring upp|hör av er|hör av dig|kontakt)/.test(t);
+
   if (wantsReg && isProvider) return "register_provider";
   if (wantsReg && isConsult)  return "register_consult";
   if (wantsDemo && isProvider) return "provider_demo";
   if (wantsDemo && isConsult)  return "consult_demo";
+  if (wantsContact) return "contact_me";
   if (isProvider) return "provider";
   if (isConsult)  return "consult";
   return "general";
@@ -161,7 +165,6 @@ const DEFAULT_QA = [
     reply: `Registrera vårdgivare: ${LINKS.regProvider}` },
   { pattern: /registrera.*(konsult|sjuksköters|läkar|vård)/i,
     reply: `Registrera konsult: ${LINKS.regConsult}` },
-  // OBS: Ingen direkt demo-push här – hanteras via shouldSuggestCTA
 ];
 
 let qaCache = null;
@@ -186,6 +189,22 @@ async function loadQuickAnswers(force=false){
   return qaCache;
 }
 
+// === SSE utilities ============================================================
+function wantsSSE(req) {
+  if (/\bstream=1\b/.test(req.url || "")) return true;
+  const accept = String(req.headers["accept"] || "");
+  return accept.includes("text/event-stream");
+}
+function sseHeaders(res) {
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+}
+function sseSend(res, event, data) {
+  if (event) res.write(`event: ${event}\n`);
+  res.write(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`);
+}
+
 // === HTTP handler =============================================================
 export default async function handler(req, res) {
   // Basic CORS & security headers
@@ -207,19 +226,22 @@ export default async function handler(req, res) {
       route:"/api/curevia-chat",
       qaCount:qa.length,
       hasKey:Boolean(OPENAI_API_KEY),
-      model: OPENAI_MODEL
+      model: OPENAI_MODEL,
+      streaming: true,
+      contactWebhook: Boolean(CONTACT_WEBHOOK_URL)
     });
   }
 
   if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
+  // Safe body parse (limit size)
+  let bodyRaw;
   try{
-    // Safe body parse (limit size)
-    const bodyRaw = await new Promise((resolve, reject) => {
-      let d=""; 
+    bodyRaw = await new Promise((resolve, reject) => {
+      let d="";
       req.on("data", c => {
         d += c;
-        if (d.length > 10 * 1024) { // 10KB rå tak
+        if (d.length > 64 * 1024) { // 64KB rå tak
           reject(new Error("Payload too large"));
           try { req.destroy(); } catch {}
         }
@@ -227,95 +249,200 @@ export default async function handler(req, res) {
       req.on("end", () => resolve(d || "{}"));
       req.on("error", reject);
     });
+  } catch(e){
+    return res.status(413).json({ error: "Payload too large" });
+  }
 
-    let parsed;
-    try { parsed = JSON.parse(bodyRaw); }
-    catch { return res.status(400).json({ error:"Invalid JSON body" }); }
+  let parsed;
+  try { parsed = JSON.parse(bodyRaw); }
+  catch { return res.status(400).json({ error:"Invalid JSON body" }); }
 
-    let { message = "" } = parsed;
-    if (typeof message !== "string" || !message.trim()) {
-      return res.status(400).json({ error:"Missing 'message' string" });
+  // ----- Contact submission endpoint (server-side) ----------------------------
+  // Skicka { contact: { name, email, phone?, company?, message } } för att lagra/forwarda
+  if (parsed?.contact && typeof parsed.contact === "object") {
+    const c = parsed.contact;
+    if (!c.name || !c.email) {
+      return res.status(400).json({ error: "Missing contact.name or contact.email" });
     }
-
-    // Trim & clamp
-    message = dePrompt(message).slice(0, MAX_INPUT_LEN);
-
-    // Sensitivt innehåll
-    if (hasSensitive(message)) {
-      return res.json({
-        reply: "Jag kan tyvärr inte ta emot person- eller journaluppgifter här. Hör av dig via en säker kanal så hjälper vi dig vidare 💙"
-      });
+    // Forward till webhook om satt, annars no-op 202
+    if (CONTACT_WEBHOOK_URL) {
+      try{
+        const r = await fetch(CONTACT_WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type":"application/json" },
+          body: JSON.stringify({
+            source: "curevia-chat",
+            ip, ts: new Date().toISOString(),
+            contact: c
+          })
+        });
+        if (!r.ok) {
+          const txt = await r.text().catch(()=> "");
+          return res.status(502).json({ error: "Webhook error", details: txt });
+        }
+      } catch(e){
+        return res.status(502).json({ error: "Webhook unreachable" });
+      }
     }
+    return res.status(202).json({ ok:true });
+  }
 
-    // Direkt: nettolönefråga?
-    const net = detectNetSalaryQuestion(message);
-    if (net) {
-      const intentNet = detectIntent(message);
-      return res.json({ reply: polishReply(net, intentNet, shouldSuggestCTA(message, intentNet)) });
+  // ----- Chat flow ------------------------------------------------------------
+  let { message = "" } = parsed;
+  if (typeof message !== "string" || !message.trim()) {
+    return res.status(400).json({ error:"Missing 'message' string" });
+  }
+  message = dePrompt(message).slice(0, MAX_INPUT_LEN);
+
+  // Sensitivt innehåll
+  if (hasSensitive(message)) {
+    return res.json({
+      reply: "Jag kan tyvärr inte ta emot person- eller journaluppgifter här. Hör av dig via en säker kanal så hjälper vi dig vidare 💙"
+    });
+  }
+
+  // Direkt: nettolönefråga?
+  const net = detectNetSalaryQuestion(message);
+  if (net) {
+    const intentNet = detectIntent(message);
+    return res.json({ reply: polishReply(net, intentNet, shouldSuggestCTA(message, intentNet)) });
+  }
+
+  // Intent & quick answers
+  const intent = detectIntent(message);
+
+  if (intent === "contact_me") {
+    // Frontend kan öppna kontaktformulär direkt baserat på detta
+    const reply = "Absolut! Fyll i dina kontaktuppgifter så hör vi av oss inom kort.";
+    return res.json({ reply, action: "open_contact_form" });
+  }
+
+  if (intent === "register_provider") {
+    return res.json({ reply: polishReply(`Här kan du registrera din verksamhet: ${LINKS.regProvider}`, intent, false) });
+  }
+  if (intent === "register_consult") {
+    return res.json({ reply: polishReply(`Toppen! Registrera din konsultprofil här: ${LINKS.regConsult}`, intent, false) });
+  }
+
+  const qa = await loadQuickAnswers();
+  const hit = qa.find(q => q.pattern.test(message));
+  if (hit) {
+    return res.json({ reply: polishReply(hit.reply, intent, shouldSuggestCTA(message,intent)) });
+  }
+
+  const fuzzyHit = fuzzyFromQAList(message, qa.map(x => ({ q: x.pattern.source, a: x.reply })));
+  if (fuzzyHit) {
+    return res.json({ reply: polishReply(fuzzyHit, intent, shouldSuggestCTA(message,intent)) });
+  }
+
+  // OpenAI fallback
+  if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
+
+  const controller = new AbortController();
+  const to = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+
+  const payloadBase = {
+    model: OPENAI_MODEL,
+    messages: [
+      { role:"system", content: `${SYSTEM_PROMPT}\nMål för svaret: ${
+        intent.startsWith("provider") ? `Hjälp vårdgivare vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
+        intent.startsWith("consult")  ? `Hjälp konsulten vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
+                                        `Ge ett kort, vänligt svar. CTA endast om det känns naturligt.`
+      }` },
+      { role:"user", content: message }
+    ],
+    temperature: 0.4,
+    max_tokens: 220
+  };
+
+  try {
+    if (wantsSSE(req)) {
+      // --- STREAMING (SSE passthrough) ---------------------------------------
+      sseHeaders(res);
+      sseSend(res, "meta", { model: OPENAI_MODEL });
+
+      const payload = { ...payloadBase, stream: true };
+      const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
+        method:"POST",
+        headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      }).catch(e => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); });
+      if (!r.ok || !r.body) {
+        const errTxt = await r.text().catch(()=> "");
+        sseSend(res, "error", { error: "Upstream error", details: errTxt });
+        res.end(); clearTimeout(to); return;
+      }
+
+      // Proxya OpenAI:s SSE till klienten, men klipp till max 3 meningar i slutet
+      const reader = r.body.getReader();
+      let full = "";
+      const decoder = new TextDecoder();
+
+      // Pumpa chunkar
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+
+        // Skicka vidare rad för rad
+        const lines = chunk.split(/\r?\n/);
+        for (const line of lines) {
+          if (!line) continue;
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") continue;
+            try {
+              const json = JSON.parse(data);
+              const delta = json.choices?.[0]?.delta?.content || "";
+              if (delta) {
+                full += delta;
+                sseSend(res, "token", delta);
+              }
+            } catch {/* ignore parse errors */}
+          }
+        }
+      }
+
+      clearTimeout(to);
+
+      // Polish & ev. CTA (eftersom vi streamat token för token skickar vi även en sammanfattande “final”)
+      const final = polishReply(full.trim(), intent, shouldSuggestCTA(message,intent));
+      sseSend(res, "final", final);
+      res.end();
+      return;
+
+    } else {
+      // --- VANLIGT (icke-stream) ---------------------------------------------
+      const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
+        method:"POST",
+        headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
+        body: JSON.stringify(payloadBase),
+        signal: controller.signal
+      }).catch(e => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); });
+
+      clearTimeout(to);
+
+      let data;
+      try { data = await r.json(); }
+      catch { return res.status(502).json({ error:"Upstream parse error" }); }
+
+      if (!r.ok) {
+        return res.status(502).json({ error: data || "Upstream error" });
+      }
+
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const reply = polishReply(raw, intent, shouldSuggestCTA(message,intent));
+      return res.json({ reply });
     }
-
-    // Intent & quick answers
-    const intent = detectIntent(message);
-    if (intent === "register_provider") {
-      return res.json({ reply: polishReply(`Här kan du registrera din verksamhet: ${LINKS.regProvider}`, intent, false) });
-    }
-    if (intent === "register_consult") {
-      return res.json({ reply: polishReply(`Toppen! Registrera din konsultprofil här: ${LINKS.regConsult}`, intent, false) });
-    }
-
-    const qa = await loadQuickAnswers();
-    const hit = qa.find(q => q.pattern.test(message));
-    if (hit) {
-      return res.json({ reply: polishReply(hit.reply, intent, shouldSuggestCTA(message,intent)) });
-    }
-
-    // Fuzzy fallback på {q,a}
-    const fuzzyHit = fuzzyFromQAList(message, qa.map(x => ({ q: x.pattern.source, a: x.reply })));
-    if (fuzzyHit) {
-      return res.json({ reply: polishReply(fuzzyHit, intent, shouldSuggestCTA(message,intent)) });
-    }
-
-    // OpenAI fallback
-    if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
-
-    const controller = new AbortController();
-    const to = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
-
-    const payload = {
-      model: OPENAI_MODEL,
-      messages: [
-        { role:"system", content: `${SYSTEM_PROMPT}\nMål för svaret: ${
-          intent.startsWith("provider") ? `Hjälp vårdgivare vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
-          intent.startsWith("consult")  ? `Hjälp konsulten vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
-                                          `Ge ett kort, vänligt svar. CTA endast om det känns naturligt.`
-        }` },
-        { role:"user", content: message }
-      ],
-      temperature: 0.4,
-      max_tokens: 220
-    };
-
-    const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
-      method:"POST",
-      headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    }).catch(e => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); });
-    clearTimeout(to);
-
-    let data;
-    try { data = await r.json(); }
-    catch { return res.status(502).json({ error:"Upstream parse error" }); }
-
-    if (!r.ok) {
-      return res.status(502).json({ error: data || "Upstream error" });
-    }
-
-    const raw = data?.choices?.[0]?.message?.content?.trim() || "";
-    const reply = polishReply(raw, intent, shouldSuggestCTA(message,intent));
-    return res.json({ reply });
 
   } catch(e){
+    clearTimeout(to);
+    if (wantsSSE(req)) {
+      try { sseSend(res, "error", { error: String(e?.message || e) }); } catch {}
+      try { res.end(); } catch {}
+      return;
+    }
     return res.status(500).json({ error:String(e?.message || e) });
   }
 }
