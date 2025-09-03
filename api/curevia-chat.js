@@ -1,14 +1,28 @@
-// api/curevia-chat.js
+// api/curevia-chat.js — v3 (Stabil + WOW: RAG + Redis persistence + Actions + SSE)
+// -------------------------------------------------------------
+// ENV (set these in your environment):
+// OPENAI_API_KEY               = sk-...
+// OPENAI_API_BASE              = https://api.openai.com/v1  (optional)
+// OPENAI_MODEL                 = gpt-4o-mini                (optional)
+// OPENAI_EMBED_MODEL           = text-embedding-3-small     (optional)
+// CONTACT_WEBHOOK_URL          = https://... (optional)
+// QUICK_ANSWERS_URL            = https://.../qa.json (optional: [{pattern, reply}])
+// RAG_INDEX_URL                = https://.../curevia-rag-index.json (optional; built by /scripts/build-rag-index.mjs)
+// UPSTASH_REDIS_REST_URL       = https://us1-...upstash.io
+// UPSTASH_REDIS_REST_TOKEN     = <token>
+// -------------------------------------------------------------
 
-// ==== Config & constants ======================================================
 const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;
 const OPENAI_API_BASE   = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const OPENAI_MODEL      = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const OPENAI_EMBED_MODEL= process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small";
 const QUICK_ANSWERS_URL = process.env.QUICK_ANSWERS_URL || "";
-const CONTACT_WEBHOOK_URL = process.env.CONTACT_WEBHOOK_URL || ""; // valfri
-const MAX_INPUT_LEN     = 2000;            // hårt tak för user input
-const OPENAI_TIMEOUT_MS = 15000;           // abort om svar dröjer
-const RATE_LIMIT_PER_MIN = 40;             // per IP
+const CONTACT_WEBHOOK_URL = process.env.CONTACT_WEBHOOK_URL || "";
+const RAG_INDEX_URL     = process.env.RAG_INDEX_URL || "";
+
+const MAX_INPUT_LEN     = 2000;
+const OPENAI_TIMEOUT_MS = 18000;
+const RATE_LIMIT_PER_MIN = 40;
 
 const LINKS = {
   demo: "https://calendly.com/tim-curevia/30min",
@@ -17,7 +31,14 @@ const LINKS = {
   pricingProviders: "https://preview--vardgig-connect.lovable.app/vardgivare",
 };
 
-// ==== Simple in-memory rate limiter ==========================================
+const ACTIONS = {
+  OPEN_URL: "open_url",
+  OPEN_CONTACT_FORM: "open_contact_form",
+};
+
+const SCHEMA_VERSION = "3.0.0";
+
+// ===== Utilities =====
 const rl = new Map(); // ip -> { count, ts }
 function rateLimitOk(ip) {
   const now = Date.now();
@@ -28,168 +49,38 @@ function rateLimitOk(ip) {
   return rec.count <= RATE_LIMIT_PER_MIN;
 }
 
-// ==== Helpers =================================================================
 function normalize(str="") {
   return str.toLowerCase()
     .replace(/[åä]/g, "a")
     .replace(/ö/g, "o")
     .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-// Fuzzy inklusionsmatchning mellan användartext och {q,a}-lista
-function fuzzyFromQAList(message, qaList=[]) {
-  const qNorm = normalize(message);
-  for (const item of qaList) {
-    const q = item?.q; const a = item?.a || item?.reply;
-    if (!q || !a) continue;
-    const qn = normalize(String(q));
-    if (!qn) continue;
-    if (qNorm.includes(qn) || qn.includes(qNorm)) return String(a);
-  }
-  return null;
+function languageOf(s=""){
+  const t = s.toLowerCase();
+  const svHits = /är|hur|vad|vill|kan|demo|boka|vårdgiv|konsult|registrera|pris|avgift|fakturer|moms/.test(t);
+  const enHits = /(how|what|demo|book|provider|consultant|register|price|fee|invoice|vat)/.test(t);
+  if (svHits && !enHits) return "sv";
+  if (enHits && !svHits) return "en";
+  return "sv";
 }
 
-// Nettolönekalkylator (enkel, pedagogisk)
-function calcNetFromInvoice(amount) {
-  const arbetsgivaravgift = 0.3142; // 31.42 %
-  const prelimSkatt = 0.30;         // 30 % (förenklad)
-  const brutto = amount / (1 + arbetsgivaravgift);
-  const skatt  = brutto * prelimSkatt;
-  const netto  = brutto - skatt;
-  const fmt = (n)=> Math.round(n).toLocaleString("sv-SE");
-
-  return `Om du fakturerar ca ${amount.toLocaleString("sv-SE")} kr exkl. moms:
-- Bruttolön (före skatt): ~${fmt(brutto)} kr
-- Preliminär skatt (30%): ~${fmt(skatt)} kr
-- Nettolön (efter skatt): ~${fmt(netto)} kr
-
-Obs: förenklad uppskattning – faktisk skatt/avgifter kan variera.`;
-}
-
-// Plockar t.ex. “fakturera 50 000” / “fakturerar 50000”
-function detectNetSalaryQuestion(msg="") {
-  const m = msg.match(/fakturer?a?\s+(\d[\d\s.,]{2,})/i);
-  if (!m) return null;
-  const amount = parseInt(m[1].replace(/[^\d]/g,""), 10);
-  if (Number.isFinite(amount) && amount > 0) return calcNetFromInvoice(amount);
-  return null;
-}
-
-// Mild “injection shield”: klipp bort typiska systemprompt-fraser i user-input
 function dePrompt(msg="") {
   return msg.replace(/^(system:|du är|you are|ignore.*instructions|act as).{0,200}/i, "").trim();
 }
-
 function hasSensitive(s=""){
   const pnr = /\b(\d{6}|\d{8})[-+]?\d{4}\b/;  // svensk PNR
   const journal = /journal|anamnes|diagnos|patient/i;
   return pnr.test(s) || journal.test(s);
 }
 
-function detectIntent(text=""){
-  const t = text.toLowerCase();
-  const isProvider = /(vårdgivar|klinik|mottag|region|upphandl|integration|pris|avgift|pilot)/.test(t);
-  const isConsult  = /(konsult|uppdrag|ersättn|timlön|bemann|legitimation|profil|sjuksköters|läkar)/.test(t);
-  const wantsDemo  = /(demo|visa|boka|möte|genomgång)/.test(t);
-  const wantsReg   = /(registrera|skapa konto|signa|ansök)/.test(t);
-  const wantsContact = /(kontakta|ring upp|hör av er|hör av dig|kontakt)/.test(t);
-
-  if (wantsReg && isProvider) return "register_provider";
-  if (wantsReg && isConsult)  return "register_consult";
-  if (wantsDemo && isProvider) return "provider_demo";
-  if (wantsDemo && isConsult)  return "consult_demo";
-  if (wantsContact) return "contact_me";
-  if (isProvider) return "provider";
-  if (isConsult)  return "consult";
-  return "general";
+function sendJSON(res, payload){
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.status(200).send(JSON.stringify(payload));
 }
 
-// När bör vi addera CTA automatiskt?
-function shouldSuggestCTA(userText, intent) {
-  const t = (userText || "").toLowerCase();
-  const explicitDemo = /(demo|visa plattformen|genomgång|boka.*möte)/.test(t);
-
-  if (intent === "provider_demo" || intent === "consult_demo") return true;
-  if (intent === "provider") {
-    return /(pris|avgift|gdpr|integration|onboard|kom igång|hur fungerar|testa)/i.test(t) && explicitDemo;
-  }
-  if (intent === "consult") {
-    return /(uppdrag|ersättn|timlön|kom igång|registrera|hur fungerar)/i.test(t) && !/(nej|inte nu)/.test(t);
-  }
-  return explicitDemo;
-}
-
-function polishReply(text, intent="general", addCTA=false){
-  if (!text) return `Vill du veta mer? Jag visar gärna 🌟 ${LINKS.demo}`;
-
-  // Max 3 meningar
-  const parts = text.replace(/\s+/g," ")
-    .split(/(?<=[.!?])\s+/).filter(Boolean).slice(0,3);
-  let msg = parts.join(" ");
-
-  // Lägg inte CTA om svaret redan har länk/CTA
-  const hasLink = /(https?:\/\/|boka.*demo|registrera|curevia\.ai|calendly\.com)/i.test(msg);
-
-  if (addCTA && !hasLink) {
-    if (intent.startsWith("provider")) msg += ` Vill du kika tillsammans? Boka gärna en kort demo 🌟 ${LINKS.demo}`;
-    else if (intent.startsWith("consult")) msg += ` Vill du komma igång? Registrera dig här 💙 ${LINKS.regConsult}`;
-    else msg += ` Vill du veta mer? Jag visar gärna 🌟 ${LINKS.demo}`;
-  }
-  return msg;
-}
-
-// === System prompt ============================================================
-const SYSTEM_PROMPT = `Du är Curevia-boten. Svara kort, vänligt och konkret på svenska.
-
-• Föreslå “Boka demo” ENDAST när användaren uttryckligen ber om demo, vill “se plattformen”, ”visa mer”, eller bekräftar att de vill titta i en genomgång.
-• Om användaren vill bli kontaktad (t.ex. “kontakta mig”, “ring upp”, “hör av er”): erbjud “Kontakta mig” och initiera kontaktflödet (öppna formulär). Säg kort att vi hör av oss inom kort.
-• Ställ hellre en förtydligande fråga än att pusha demo.
-• Ge aldrig råd som innehåller personnummer eller journalinformation; hänvisa till säker kanal.
-• Ton: varm, proffsig och lösningsorienterad. Max 2–3 meningar per svar.
-`;
-
-// === Quick Answers (regex m.m.) ==============================================
-const DEFAULT_QA = [
-  { pattern: /eget bolag|företag/i,
-    reply: `Du behöver inte ha eget bolag – du kan få betalt via Curevia eller fakturera själv om du vill. Registrera konsultprofil: ${LINKS.regConsult}` },
-  { pattern: /utbetal/i,
-    reply: `Utbetalning via Curevia sker när vårdgivaren betalat. Har du eget bolag fakturerar du själv, vanligtvis med 30 dagars betalvillkor.` },
-  { pattern: /inte betalar|försenad betal|betalningspåminn/i,
-    reply: `Om en vårdgivare är sen driver Curevia ärendet till påminnelse, inkasso och vid behov Kronofogden – du ska känna dig trygg att få betalt.` },
-  { pattern: /kostnad|pris|avgift|prislista/i,
-    reply: `Att testa är gratis – de tre första uppdragen per år är kostnadsfria. Därefter låg avgift. Prislista: ${LINKS.pricingProviders}` },
-  { pattern: /onboard|komma igång|starta|hur börjar/i,
-    reply: `Skapa ett uppdrag och välj bland intresserade konsulter – en kundansvarig hjälper er hela vägen.` },
-  { pattern: /registrera.*(vårdgiv|klinik|mottag)/i,
-    reply: `Registrera vårdgivare: ${LINKS.regProvider}` },
-  { pattern: /registrera.*(konsult|sjuksköters|läkar|vård)/i,
-    reply: `Registrera konsult: ${LINKS.regConsult}` },
-];
-
-let qaCache = null;
-async function loadQuickAnswers(force=false){
-  if (!force && qaCache) return qaCache;
-  const list = [...DEFAULT_QA];
-
-  if (QUICK_ANSWERS_URL && /^https?:\/\//i.test(QUICK_ANSWERS_URL)) {
-    try{
-      const r = await fetch(QUICK_ANSWERS_URL, { cache:"no-store" });
-      if (r.ok){
-        const extra = await r.json();
-        for (const item of extra){
-          if (item?.pattern && (item?.reply || item?.a)) {
-            list.push({ pattern: new RegExp(item.pattern, "i"), reply: String(item.reply || item.a) });
-          }
-        }
-      }
-    }catch{/* tyst fallback */}
-  }
-  qaCache = list;
-  return qaCache;
-}
-
-// === SSE utilities ============================================================
 function wantsSSE(req) {
   if (/\bstream=1\b/.test(req.url || "")) return true;
   const accept = String(req.headers["accept"] || "");
@@ -205,244 +96,39 @@ function sseSend(res, event, data) {
   res.write(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`);
 }
 
-// === HTTP handler =============================================================
-export default async function handler(req, res) {
-  // Basic CORS & security headers
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Cache-Control", "no-store");
-
-  if (req.method === "OPTIONS") return res.status(204).end();
-
-  const ip = (req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").toString().split(",")[0].trim();
-  if (!rateLimitOk(ip)) return res.status(429).json({ error: "Too Many Requests" });
-
-  if (req.method === "GET"){
-    if (req.url?.includes("reload=1")) qaCache = null;
-    const qa = await loadQuickAnswers();
-    return res.json({
-      ok:true,
-      route:"/api/curevia-chat",
-      qaCount:qa.length,
-      hasKey:Boolean(OPENAI_API_KEY),
-      model: OPENAI_MODEL,
-      streaming: true,
-      contactWebhook: Boolean(CONTACT_WEBHOOK_URL)
+// ===== Redis (Upstash) — optional, with fallback =====
+let redis = null;
+async function lazyRedis(){
+  if (redis !== null) return redis;
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    const { Redis } = await import("@upstash/redis");
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
     });
+  } else {
+    redis = false; // no redis configured
   }
-
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
-  // Safe body parse (limit size)
-  let bodyRaw;
-  try{
-    bodyRaw = await new Promise((resolve, reject) => {
-      let d="";
-      req.on("data", c => {
-        d += c;
-        if (d.length > 64 * 1024) { // 64KB rå tak
-          reject(new Error("Payload too large"));
-          try { req.destroy(); } catch {}
-        }
-      });
-      req.on("end", () => resolve(d || "{}"));
-      req.on("error", reject);
-    });
-  } catch(e){
-    return res.status(413).json({ error: "Payload too large" });
-  }
-
-  let parsed;
-  try { parsed = JSON.parse(bodyRaw); }
-  catch { return res.status(400).json({ error:"Invalid JSON body" }); }
-
-  // ----- Contact submission endpoint (server-side) ----------------------------
-  // Skicka { contact: { name, email, phone?, company?, message } } för att lagra/forwarda
-  if (parsed?.contact && typeof parsed.contact === "object") {
-    const c = parsed.contact;
-    if (!c.name || !c.email) {
-      return res.status(400).json({ error: "Missing contact.name or contact.email" });
-    }
-    // Forward till webhook om satt, annars no-op 202
-    if (CONTACT_WEBHOOK_URL) {
-      try{
-        const r = await fetch(CONTACT_WEBHOOK_URL, {
-          method: "POST",
-          headers: { "Content-Type":"application/json" },
-          body: JSON.stringify({
-            source: "curevia-chat",
-            ip, ts: new Date().toISOString(),
-            contact: c
-          })
-        });
-        if (!r.ok) {
-          const txt = await r.text().catch(()=> "");
-          return res.status(502).json({ error: "Webhook error", details: txt });
-        }
-      } catch(e){
-        return res.status(502).json({ error: "Webhook unreachable" });
-      }
-    }
-    return res.status(202).json({ ok:true });
-  }
-
-  // ----- Chat flow ------------------------------------------------------------
-  let { message = "" } = parsed;
-  if (typeof message !== "string" || !message.trim()) {
-    return res.status(400).json({ error:"Missing 'message' string" });
-  }
-  message = dePrompt(message).slice(0, MAX_INPUT_LEN);
-
-  // Sensitivt innehåll
-  if (hasSensitive(message)) {
-    return res.json({
-      reply: "Jag kan tyvärr inte ta emot person- eller journaluppgifter här. Hör av dig via en säker kanal så hjälper vi dig vidare 💙"
-    });
-  }
-
-  // Direkt: nettolönefråga?
-  const net = detectNetSalaryQuestion(message);
-  if (net) {
-    const intentNet = detectIntent(message);
-    return res.json({ reply: polishReply(net, intentNet, shouldSuggestCTA(message, intentNet)) });
-  }
-
-  // Intent & quick answers
-  const intent = detectIntent(message);
-
-  if (intent === "contact_me") {
-    // Frontend kan öppna kontaktformulär direkt baserat på detta
-    const reply = "Absolut! Fyll i dina kontaktuppgifter så hör vi av oss inom kort.";
-    return res.json({ reply, action: "open_contact_form" });
-  }
-
-  if (intent === "register_provider") {
-    return res.json({ reply: polishReply(`Här kan du registrera din verksamhet: ${LINKS.regProvider}`, intent, false) });
-  }
-  if (intent === "register_consult") {
-    return res.json({ reply: polishReply(`Toppen! Registrera din konsultprofil här: ${LINKS.regConsult}`, intent, false) });
-  }
-
-  const qa = await loadQuickAnswers();
-  const hit = qa.find(q => q.pattern.test(message));
-  if (hit) {
-    return res.json({ reply: polishReply(hit.reply, intent, shouldSuggestCTA(message,intent)) });
-  }
-
-  const fuzzyHit = fuzzyFromQAList(message, qa.map(x => ({ q: x.pattern.source, a: x.reply })));
-  if (fuzzyHit) {
-    return res.json({ reply: polishReply(fuzzyHit, intent, shouldSuggestCTA(message,intent)) });
-  }
-
-  // OpenAI fallback
-  if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
-
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
-
-  const payloadBase = {
-    model: OPENAI_MODEL,
-    messages: [
-      { role:"system", content: `${SYSTEM_PROMPT}\nMål för svaret: ${
-        intent.startsWith("provider") ? `Hjälp vårdgivare vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
-        intent.startsWith("consult")  ? `Hjälp konsulten vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
-                                        `Ge ett kort, vänligt svar. CTA endast om det känns naturligt.`
-      }` },
-      { role:"user", content: message }
-    ],
-    temperature: 0.4,
-    max_tokens: 220
-  };
-
-  try {
-    if (wantsSSE(req)) {
-      // --- STREAMING (SSE passthrough) ---------------------------------------
-      sseHeaders(res);
-      sseSend(res, "meta", { model: OPENAI_MODEL });
-
-      const payload = { ...payloadBase, stream: true };
-      const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
-        method:"POST",
-        headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      }).catch(e => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); });
-      if (!r.ok || !r.body) {
-        const errTxt = await r.text().catch(()=> "");
-        sseSend(res, "error", { error: "Upstream error", details: errTxt });
-        res.end(); clearTimeout(to); return;
-      }
-
-      // Proxya OpenAI:s SSE till klienten, men klipp till max 3 meningar i slutet
-      const reader = r.body.getReader();
-      let full = "";
-      const decoder = new TextDecoder();
-
-      // Pumpa chunkar
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-
-        // Skicka vidare rad för rad
-        const lines = chunk.split(/\r?\n/);
-        for (const line of lines) {
-          if (!line) continue;
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            if (data === "[DONE]") continue;
-            try {
-              const json = JSON.parse(data);
-              const delta = json.choices?.[0]?.delta?.content || "";
-              if (delta) {
-                full += delta;
-                sseSend(res, "token", delta);
-              }
-            } catch {/* ignore parse errors */}
-          }
-        }
-      }
-
-      clearTimeout(to);
-
-      // Polish & ev. CTA (eftersom vi streamat token för token skickar vi även en sammanfattande “final”)
-      const final = polishReply(full.trim(), intent, shouldSuggestCTA(message,intent));
-      sseSend(res, "final", final);
-      res.end();
-      return;
-
-    } else {
-      // --- VANLIGT (icke-stream) ---------------------------------------------
-      const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
-        method:"POST",
-        headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
-        body: JSON.stringify(payloadBase),
-        signal: controller.signal
-      }).catch(e => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); });
-
-      clearTimeout(to);
-
-      let data;
-      try { data = await r.json(); }
-      catch { return res.status(502).json({ error:"Upstream parse error" }); }
-
-      if (!r.ok) {
-        return res.status(502).json({ error: data || "Upstream error" });
-      }
-
-      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
-      const reply = polishReply(raw, intent, shouldSuggestCTA(message,intent));
-      return res.json({ reply });
-    }
-
-  } catch(e){
-    clearTimeout(to);
-    if (wantsSSE(req)) {
-      try { sseSend(res, "error", { error: String(e?.message || e) }); } catch {}
-      try { res.end(); } catch {}
-      return;
-    }
-    return res.status(500).json({ error:String(e?.message || e) });
-  }
+  return redis;
 }
+
+async function trackTrendPersist(qNorm, reply){
+  const r = await lazyRedis();
+  if (!r) return; // no-op
+  try {
+    await r.hincrby("curevia:trending", qNorm, 1);
+    if (reply && reply.length <= 420) {
+      await r.hset("curevia:trending:lastReply", { [qNorm]: reply });
+    }
+  } catch {}
+}
+
+async function getPromotedQAFromRedis(limit=10){
+  const r = await lazyRedis();
+  if (!r) return [];
+  try {
+    const all = await r.hgetall("curevia:trending");
+    const last = await r.hgetall("curevia:trending:lastReply") || {};
+    if (!all) return [];
+    const entries = Object.entries(all)
+      .ma
