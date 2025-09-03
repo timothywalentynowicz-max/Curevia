@@ -41,14 +41,12 @@
     .foot{font-size:12px;color:var(--muted);padding:8px 16px;background:var(--card);border-top:1px solid var(--border)}
     @media (max-width:640px){ .log{height:60vh} }
 
-    /* Typing animation */
     .typing-wrap{display:inline-flex;gap:6px;align-items:center}
     .dot{width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:blink 1.2s infinite}
     .dot:nth-child(2){animation-delay:.2s}
     .dot:nth-child(3){animation-delay:.4s}
     @keyframes blink{ 0%,100%{opacity:.25;transform:translateY(0)} 20%{opacity:1;transform:translateY(-2px)} }
 
-    /* Copy button (visas bara på långa bot-svar) */
     .copy{
       position:absolute; right:8px; top:8px;
       border:1px solid var(--chip-b); background:transparent; color:var(--muted);
@@ -57,12 +55,10 @@
     .copy.ok{ color:#16a34a; border-color:#16a34a }
     .copy.err{ color:#ef4444; border-color:#ef4444 }
 
-    /* Modal */
     .modal-back{position:fixed;inset:0;background:rgba(2,6,23,.4);display:none;align-items:center;justify-content:center;padding:16px}
     .modal{background:var(--card);color:var(--text);border-radius:16px;box-shadow:var(--shadow);max-width:520px;width:100%;border:1px solid var(--border)}
     .modal .head{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600}
     .modal .body{padding:16px}
-    .modal .row{display:flex;gap:8px;padding:0;border:0;background:none}
     .field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
     .field input,.field textarea{padding:10px;border:1px solid var(--chip-b);border-radius:12px;width:100%;background:transparent;color:var(--text)}
     .modal .actions{display:flex;gap:8px;justify-content:flex-end;padding:14px 16px;border-top:1px solid var(--border)}
@@ -95,7 +91,6 @@
     </div>
   </div>
 
-  <!-- Contact Modal -->
   <div id="backdrop" class="modal-back" role="dialog" aria-modal="true">
     <div class="modal">
       <div class="head" id="ui-modal-title">Lämna dina uppgifter</div>
@@ -122,7 +117,7 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  // ---- Language detection (sv / no / en)
+  // Språk (sv/no/en)
   function detectLang(){
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
     const nlang = (navigator.languages && navigator.languages[0]) || navigator.language || "";
@@ -150,7 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ui-email-label").textContent = I18N.email;
   $("ui-msg-label").textContent = I18N.msg;
 
-  // Theme
+  // Theme toggle
   const themeBtn = $("theme");
   const savedTheme = localStorage.getItem("cv_theme");
   if (savedTheme === "dark") document.documentElement.classList.add("dark");
@@ -195,7 +190,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const div = document.createElement("div");
     div.className = "bubble " + (who==="me"?"me":"bot");
     div.textContent = text;
-    // Visa “Kopiera” bara på långa bot-svar
+    // Visa “Kopiera” endast på längre bot-svar
     if (who !== "me" && text && text.length >= 120) attachCopyButton(div);
     if (citations && citations.length){
       citations.forEach(c=>{
@@ -241,7 +236,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Skicka (SSE + fallback)
   async function send(text){
     if (!text?.trim()) return;
     addBubble(text, "me");
@@ -306,7 +300,7 @@ document.addEventListener("DOMContentLoaded", () => {
           for (const line of lines) {
             if (line.startsWith("event:")) event = line.slice(6).trim();
             else if (line.startsWith("data:")) {
-              // behåll mellanslag i token-data
+              // behåll mellanslag i token-data (ta endast bort själva kolonets singelspace)
               let payload = line.slice(5);
               if (payload.startsWith(" ")) payload = payload.slice(1);
               data += payload;
@@ -316,7 +310,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
           if (event === "token") {
             if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
-            bubble.innerText += data;   // innerText bevarar mellanrum/rader
+            bubble.innerText += data;
             log.scrollTo({ top: log.scrollHeight });
           }
           else if (event === "action") {
@@ -381,7 +375,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Bindningar + start
   $("btn").addEventListener("click", () => send($("inp").value));
   $("inp").addEventListener("keydown", (e) => { if (e.key === "Enter") send(e.target.value); });
   meta();
