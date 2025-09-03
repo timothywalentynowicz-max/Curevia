@@ -5,39 +5,35 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Curevia – Chat</title>
   <style>
-    body { font-family: system-ui, Arial; background: var(--bg); margin:0 }
-    :root {
-      --bg: #f8fafc;
-      --bot: #f1f5f9;
-      --me: #2563eb;
-      --text: #0f172a;
-      --bubble-text: #111827;
+    :root{
+      --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a;
+      --border:#cbd5e1;
     }
-    body.dark {
-      --bg: #0f172a;
-      --bot: #1e293b;
-      --me: #3b82f6;
-      --text: #f8fafc;
-      --bubble-text: #f8fafc;
-    }
-    .wrap { max-width:720px;margin:0 auto;padding:24px }
-    .bubble { padding:12px 14px; border-radius:16px; margin:8px 0; max-width:80%; white-space:pre-wrap; }
-    .bot { background:var(--bot); color:var(--bubble-text); border-top-left-radius:4px }
-    .me { background:var(--me); color:#fff; margin-left:auto; border-top-right-radius:4px }
-    .row { display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:8px 0 }
-    input { flex:1; padding:12px; border:1px solid #cbd5e1; border-radius:12px }
-    button { padding:12px 16px; border:0; border-radius:12px; background:#111827; color:white; cursor:pointer }
+    body{font-family:system-ui,Arial;background:var(--bg);color:var(--text);margin:0}
+    .wrap{max-width:720px;margin:0 auto;padding:24px}
+    h3{margin:0 0 12px;display:flex;align-items:center;justify-content:space-between}
+    .bubble{padding:12px 14px;border-radius:16px;margin:8px 0;max-width:80%;white-space:pre-wrap}
+    .bot{background:var(--bot);border-top-left-radius:6px}
+    .me{background:var(--me);color:#fff;margin-left:auto;border-top-right-radius:6px}
+    .row{display:flex;gap:8px;position:sticky;bottom:0;background:var(--bg);padding:8px 0}
+    input{flex:1;padding:12px;border:1px solid var(--border);border-radius:12px}
+    button{padding:12px 16px;border:0;border-radius:12px;background:#111827;color:#fff;cursor:pointer}
     .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
     .chip{background:#e2e8f0;border-radius:999px;padding:6px 10px;font-size:14px;cursor:pointer}
-    .dark-toggle { position:absolute; top:10px; right:10px; }
-    .copy-btn { font-size:12px; margin-top:4px; cursor:pointer; color:gray }
+    .copy{font-size:12px;color:#64748b;margin-top:4px;cursor:pointer}
+    .toggle{border:1px solid var(--border);background:#fff;color:#111827;border-radius:999px;padding:6px 10px}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h3>Curevia Assistant <button id="darkToggle" class="dark-toggle">Mörkt läge</button></h3>
+    <h3>
+      <span>Curevia Assistant</span>
+      <button id="dark" class="toggle" type="button">Mörkt läge</button>
+    </h3>
+
     <div id="log"></div>
     <div id="chips" class="chips"></div>
+
     <div class="row">
       <input id="inp" placeholder="Skriv ett meddelande..." />
       <button id="btn" type="button">Skicka</button>
@@ -45,59 +41,75 @@
   </div>
 
 <script>
-const API = "/api/curevia-chat";   // ✅ rätt API-rad
+/* ===== Config ===== */
+const API = "/api/curevia-chat";  // <— rätt, utan .js
+const sessionId = self.crypto?.randomUUID?.() || ("sess-" + Date.now());
 
-const log = document.getElementById("log");
-const chipsEl = document.getElementById("chips");
-const inp = document.getElementById("inp");
-const btn = document.getElementById("btn");
-const darkToggle = document.getElementById("darkToggle");
-const sessionId = self.crypto?.randomUUID?.() || "sess-" + Date.now();
+/* ===== DOM ===== */
+const log   = document.getElementById("log");
+const chips = document.getElementById("chips");
+const inp   = document.getElementById("inp");
+const btn   = document.getElementById("btn");
+const dark  = document.getElementById("dark");
 
+/* ===== UI helpers ===== */
 function addBubble(text, who="bot"){
   const div = document.createElement("div");
-  div.className = "bubble " + (who==="me"?"me":"bot");
-  div.innerText = text;
-  if (who !== "me" && text.length > 120) {
-    const copyBtn = document.createElement("div");
-    copyBtn.className = "copy-btn";
-    copyBtn.textContent = "📋 Kopiera";
-    copyBtn.onclick = () => navigator.clipboard.writeText(text);
-    div.appendChild(copyBtn);
+  div.className = "bubble " + (who==="me" ? "me" : "bot");
+  div.innerText = text || "";
+  if (who !== "me" && (text||"").length > 120){
+    const cp = document.createElement("div");
+    cp.className = "copy";
+    cp.textContent = "📋 Kopiera";
+    cp.onclick = () => navigator.clipboard.writeText(div.innerText);
+    div.appendChild(cp);
   }
   log.appendChild(div);
-  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+  return div;
 }
 
-async function meta(){
-  try {
+function typingBubble() {
+  const b = addBubble("…", "bot");
+  return { destroy(){ try{ b.remove(); }catch{} } };
+}
+
+/* ===== Dark mode ===== */
+dark.onclick = () => document.body.classList.toggle("dark");
+
+/* ===== Boot ===== */
+boot();
+async function boot(){
+  try{
     const r = await fetch(API, { headers: { "X-Session-Id": sessionId }});
-    const m = await r.json().catch(()=>({ suggested:[] }));
+    const ct = (r.headers.get("content-type")||"").toLowerCase();
+    if (!ct.includes("application/json")) throw new Error("meta not json");
+    const m = await r.json();
     addBubble("Hej! 👋 Hur kan jag hjälpa till idag?");
-    (m.suggested||[]).forEach(c => {
-      const el = document.createElement("span");
-      el.className = "chip";
-      el.textContent = c.label;
-      el.onclick = () => send(c.label);
-      chipsEl.appendChild(el);
+    (m.suggested || []).forEach(x=>{
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = x.label;
+      chip.onclick = ()=> send(x.label);
+      chips.appendChild(chip);
     });
-  } catch(e) {
-    addBubble("Kunde inte nå servern just nu.");
+  }catch{
+    addBubble("Jag nådde inte servern just nu – prova igen om en stund 🙏");
   }
 }
 
+/* ===== Send ===== */
+btn.onclick = ()=> send(inp.value);
+inp.addEventListener("keydown", e => { if (e.key==="Enter") send(inp.value); });
+
 async function send(text){
-  if (!text.trim()) return;
+  if (!text || !text.trim()) return;
   addBubble(text, "me");
   inp.value = "";
 
-  const bubble = document.createElement("div");
-  bubble.className = "bubble bot";
-  log.appendChild(bubble);
-
-  const typing = document.createElement("span");
-  typing.textContent = "…";
-  bubble.appendChild(typing);
+  const bubble = addBubble("", "bot");          // där svaret hamnar
+  const typing = typingBubble();                // liten “…”-indikator
+  let gotAnyToken = false;
 
   try {
     const r = await fetch(API + "?stream=1", {
@@ -105,71 +117,109 @@ async function send(text){
       headers: {
         "Content-Type":"application/json",
         "X-Session-Id": sessionId,
-        "X-Lang": navigator.language || "sv"
+        "Accept":"text/event-stream"
       },
       body: JSON.stringify({ message: text })
     });
 
     const ct = (r.headers.get("content-type") || "").toLowerCase();
+
+    // Skydd: om vi råkar få HTML/JS/text, visa fel (inte källkod i bubblan)
     if (!ct.includes("text/event-stream")) {
-      typing.remove();
-      bubble.innerText = "Ett fel uppstod när jag försökte nå servern.";
+      const safe = ct.includes("application/json");
+      if (safe) {
+        const data = await r.json();
+        typing.destroy();
+        bubble.innerText = data.reply || "Tekniskt fel – prova igen.";
+      } else {
+        typing.destroy();
+        bubble.innerText = "Tekniskt fel – prova igen.";
+      }
       return;
     }
 
+    // === Robust SSE-parser: funkar med BÅDE din backend (event: token/final)
+    // === OCH OpenAI-råstream (data: {...delta.content...})
     const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let done = false;
-    let fullText = "";
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
 
-    while(!done){
-      const {value, done:doneNow} = await reader.read();
-      done = doneNow;
-      if (value){
-        const chunk = decoder.decode(value, {stream: true});
-        const lines = chunk.split(/\r?\n/);
+    while (true){
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+
+      // Processa hela SSE-eventblock (separerade med tom rad)
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+
+        const lines = raw.split(/\r?\n/);
+        let event = "message";
+        let data  = "";
+
         for (const line of lines){
           if (!line) continue;
-          if (line.startsWith("data:")){
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) {
             let payload = line.slice(5);
-            if (payload.startsWith(" ")) payload = payload.slice(1);
-            if (payload === "[DONE]") continue;
-            try {
-              const json = JSON.parse(payload);
-              const delta = json.choices?.[0]?.delta?.content;
-              if (delta){
-                fullText += delta;
-                typing.remove();
-                bubble.innerText = fullText; // ✅ behåller mellanslag
-              }
-            } catch(e){}
+            if (payload.startsWith(" ")) payload = payload.slice(1); // ta bort bara ett space efter kolon
+            data += payload;
           }
         }
+        if (!data) continue;
+
+        // 1) Din backend: event: token → data = sträng
+        if (event === "token") {
+          if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
+          bubble.innerText += data;                 // bevara mellanslag/rader
+          log.scrollTo({ top: log.scrollHeight });
+          continue;
+        }
+
+        // 2) Din backend: event: final → data kan vara sträng eller {"reply": "..."}
+        if (event === "final") {
+          typing.destroy();
+          try {
+            const j = JSON.parse(data);
+            if (!gotAnyToken && j.reply) bubble.innerText = j.reply;
+            // (ev. citations mm kan hanteras här om du börjar skicka dem)
+          } catch {
+            if (!gotAnyToken) bubble.innerText = data;
+          }
+          continue;
+        }
+
+        // 3) OpenAI råstream (inga event-fält, bara data: {choices[0].delta.content})
+        //    eller event: message med samma data
+        try{
+          const j = JSON.parse(data);
+          const delta = j?.choices?.[0]?.delta?.content;
+          if (delta){
+            if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
+            bubble.innerText += delta;
+          }
+        }catch{/* om inte JSON, ignorerar vi */}
       }
     }
 
-    if (fullText.length > 120) {
-      const copyBtn = document.createElement("div");
-      copyBtn.className = "copy-btn";
-      copyBtn.textContent = "📋 Kopiera";
-      copyBtn.onclick = () => navigator.clipboard.writeText(fullText);
-      bubble.appendChild(copyBtn);
+    if (!gotAnyToken) { typing.destroy(); if (!bubble.innerText) bubble.innerText = "Inget svar – prova igen."; }
+
+    // Lägg copy efteråt om svaret är längre
+    if (bubble.innerText.length > 120){
+      const cp = document.createElement("div");
+      cp.className = "copy";
+      cp.textContent = "📋 Kopiera";
+      cp.onclick = () => navigator.clipboard.writeText(bubble.innerText);
+      bubble.appendChild(cp);
     }
 
   } catch(e) {
-    typing.remove();
-    bubble.innerText = "Kunde inte få svar just nu.";
+    typing.destroy();
+    bubble.innerText = "Tekniskt fel – prova igen.";
   }
 }
-
-document.addEventListener("DOMContentLoaded", () => {
-  btn.addEventListener("click", () => send(inp.value));
-  inp.addEventListener("keydown", (e)=>{ if(e.key==="Enter") send(inp.value); });
-  darkToggle.addEventListener("click", () => {
-    document.body.classList.toggle("dark");
-  });
-  meta();
-});
 </script>
 </body>
 </html>
