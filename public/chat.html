@@ -1,523 +1,175 @@
-// api/curevia-chat.js
-
-// ==== Config & constants ======================================================
-const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;
-const OPENAI_API_BASE   = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
-const OPENAI_MODEL      = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const QUICK_ANSWERS_URL = process.env.QUICK_ANSWERS_URL || "";
-const CONTACT_WEBHOOK_URL = process.env.CONTACT_WEBHOOK_URL || ""; // valfri
-const MAX_INPUT_LEN     = 2000;            // hårt tak för user input
-const OPENAI_TIMEOUT_MS = 15000;           // abort om svar dröjer
-const RATE_LIMIT_PER_MIN = 40;             // per IP
-
-const LINKS = {
-  demo: "https://calendly.com/tim-curevia/30min",
-  regConsult: "https://curevia.ai/consultant/register",
-  regProvider: "https://curevia.ai/auth?type=signup&returnTo=/employer/register",
-  pricingProviders: "https://curevia.ai/vardgivare", // uppdaterad
-};
-
-// ==== Simple in-memory rate limiter ==========================================
-const rl = new Map(); // ip -> { count, ts }
-function rateLimitOk(ip) {
-  const now = Date.now();
-  const rec = rl.get(ip) || { count:0, ts:now };
-  if (now - rec.ts > 60_000) { rec.count = 0; rec.ts = now; }
-  rec.count += 1;
-  rl.set(ip, rec);
-  return rec.count <= RATE_LIMIT_PER_MIN;
-}
-
-// ==== Helpers =================================================================
-function normalize(str="") {
-  return str.toLowerCase()
-    .replace(/[åä]/g, "a")
-    .replace(/ö/g, "o")
-    .replace(/[^a-z0-9\s]/g, "")
-    .trim();
-}
-
-// Fuzzy inklusionsmatchning mellan användartext och {q,a}-lista
-function fuzzyFromQAList(message, qaList=[]) {
-  const qNorm = normalize(message);
-  for (const item of qaList) {
-    const q = item?.q; const a = item?.a || item?.reply;
-    if (!q || !a) continue;
-    const qn = normalize(String(q));
-    if (!qn) continue;
-    if (qNorm.includes(qn) || qn.includes(qNorm)) return String(a);
-  }
-  return null;
-}
-
-// Nettolönekalkylator (enkel, pedagogisk)
-function calcNetFromInvoice(amount) {
-  const arbetsgivaravgift = 0.3142; // 31.42 %
-  const prelimSkatt = 0.30;         // 30 % (förenklad)
-  const brutto = amount / (1 + arbetsgivaravgift);
-  const skatt  = brutto * prelimSkatt;
-  const netto  = brutto - skatt;
-  const fmt = (n)=> Math.round(n).toLocaleString("sv-SE");
-
-  return `Om du fakturerar ca ${amount.toLocaleString("sv-SE")} kr exkl. moms:
-- Bruttolön (före skatt): ~${fmt(brutto)} kr
-- Preliminär skatt (30%): ~${fmt(skatt)} kr
-- Nettolön (efter skatt): ~${fmt(netto)} kr
-
-Obs: förenklad uppskattning – faktisk skatt/avgifter kan variera.`;
-}
-
-// Plockar t.ex. “fakturera 50 000” / “fakturerar 50000”
-function detectNetSalaryQuestion(msg="") {
-  const m = msg.match(/fakturer?a?\s+(\d[\d\s.,]{2,})/i);
-  if (!m) return null;
-  const amount = parseInt(m[1].replace(/[^\d]/g,""), 10);
-  if (Number.isFinite(amount) && amount > 0) return calcNetFromInvoice(amount);
-  return null;
-}
-
-// Mild “injection shield”: klipp bort typiska systemprompt-fraser i user-input
-function dePrompt(msg="") {
-  return msg.replace(/^(system:|du är|you are|ignore.*instructions|act as).{0,200}/i, "").trim();
-}
-
-function hasSensitive(s=""){
-  const pnr = /\b(\d{6}|\d{8})[-+]?\d{4}\b/;  // svensk PNR
-  const journal = /journal|anamnes|diagnos|patient/i;
-  return pnr.test(s) || journal.test(s);
-}
-
-function detectIntent(text=""){
-  const t = text.toLowerCase();
-  const isProvider = /(vårdgivar|klinik|mottag|region|upphandl|integration|pris|avgift|pilot)/.test(t);
-  const isConsult  = /(konsult|uppdrag|ersättn|timlön|bemann|legitimation|profil|sjuksköters|läkar)/.test(t);
-  const wantsDemo  = /(demo|visa|boka|möte|genomgång)/.test(t);
-  const wantsReg   = /(registrera|skapa konto|signa|ansök)/.test(t);
-  const wantsContact = /(kontakta|ring upp|hör av er|hör av dig|kontakt)/.test(t);
-
-  if (wantsReg && isProvider) return "register_provider";
-  if (wantsReg && isConsult)  return "register_consult";
-  if (wantsDemo && isProvider) return "provider_demo";
-  if (wantsDemo && isConsult)  return "consult_demo";
-  if (wantsContact) return "contact_me";
-  if (isProvider) return "provider";
-  if (isConsult)  return "consult";
-  return "general";
-}
-
-// När bör vi addera CTA automatiskt?
-function shouldSuggestCTA(userText, intent) {
-  const t = (userText || "").toLowerCase();
-  const explicitDemo = /(demo|visa plattformen|genomgång|boka.*möte)/.test(t);
-
-  if (intent === "provider_demo" || intent === "consult_demo") return true;
-  if (intent === "provider") {
-    return /(pris|avgift|gdpr|integration|onboard|kom igång|hur fungerar|testa)/i.test(t) && explicitDemo;
-  }
-  if (intent === "consult") {
-    return /(uppdrag|ersättn|timlön|kom igång|registrera|hur fungerar)/i.test(t) && !/(nej|inte nu)/.test(t);
-  }
-  return explicitDemo;
-}
-
-function polishReply(text, intent="general", addCTA=false){
-  if (!text) return `Vill du veta mer? Jag visar gärna 🌟 ${LINKS.demo}`;
-
-  // Max 3 meningar
-  const parts = text.replace(/\s+/g," ")
-    .split(/(?<=[.!?])\s+/).filter(Boolean).slice(0,3);
-  let msg = parts.join(" ");
-
-  // Lägg inte CTA om svaret redan har länk/CTA
-  const hasLink = /(https?:\/\/|boka.*demo|registrera|curevia\.ai|calendly\.com)/i.test(msg);
-
-  if (addCTA && !hasLink) {
-    if (intent.startsWith("provider")) msg += ` Vill du kika tillsammans? Boka gärna en kort demo 🌟 ${LINKS.demo}`;
-    else if (intent.startsWith("consult")) msg += ` Vill du komma igång? Registrera dig här 💙 ${LINKS.regConsult}`;
-    else msg += ` Vill du veta mer? Jag visar gärna 🌟 ${LINKS.demo}`;
-  }
-  return msg;
-}
-
-// === System prompt (neutral, språkstyrd) ======================================
-const SYSTEM_PROMPT_BASE = `Du är Curevia-boten. Svara kort, vänligt och konkret.
-
-• Föreslå “Boka demo” ENDAST när användaren uttryckligen ber om demo, vill “se plattformen”, ”visa mer”, eller bekräftar att de vill titta i en genomgång.
-• Om användaren vill bli kontaktad (t.ex. “kontakta mig”, “ring upp”, “hör av er”): erbjud “Kontakta mig” och initiera kontaktflödet (öppna formulär). Säg kort att vi hör av oss inom kort.
-• Ställ hellre en förtydligande fråga än att pusha demo.
-• Ge aldrig råd som innehåller personnummer eller journalinformation; hänvisa till säker kanal.
-• Ton: varm, proffsig och lösningsorienterad. Max 2–3 meningar per svar.
-
-Språkpolicy:
-- Svara på det språk som anges av systeminstruktionen nedan (svenska / norsk bokmål / engelska).
-- Om användaren uttryckligen ber att byta språk, följ den begäran direkt.`;
-
-// === Quick Answers (regex m.m.) ==============================================
-const DEFAULT_QA = [
-  { pattern: /eget bolag|företag/i,
-    reply: `Du behöver inte ha eget bolag – du kan få betalt via Curevia eller fakturera själv om du vill. Registrera konsultprofil: ${LINKS.regConsult}` },
-  { pattern: /utbetal/i,
-    reply: `Utbetalning via Curevia sker när vårdgivaren betalat. Har du eget bolag fakturerar du själv, vanligtvis med 30 dagars betalvillkor.` },
-  { pattern: /inte betalar|försenad betal|betalningspåminn/i,
-    reply: `Om en vårdgivare är sen driver Curevia ärendet till påminnelse, inkasso och vid behov Kronofogden – du ska känna dig trygg att få betalt.` },
-  // Uppdaterad pris/kostnad
-  { pattern: /kostnad|pris|avgift|prislista/i,
-    reply: `Curevia är gratis för både vårdgivare och vårdpersonal att komma igång med. För vårdgivare finns olika paket beroende på hur mycket tjänsten används. Läs mer här: https://curevia.ai/vardgivare` },
-  { pattern: /onboard|komma igång|starta|hur börjar/i,
-    reply: `Skapa ett uppdrag och välj bland intresserade konsulter – en kundansvarig hjälper er hela vägen.` },
-  { pattern: /registrera.*(vårdgiv|klinik|mottag)/i,
-    reply: `Registrera vårdgivare: ${LINKS.regProvider}` },
-  { pattern: /registrera.*(konsult|sjuksköters|läkar|vård)/i,
-    reply: `Registrera konsult: ${LINKS.regConsult}` },
-];
-
-let qaCache = null;
-async function loadQuickAnswers(force=false){
-  if (!force && qaCache) return qaCache;
-  const list = [...DEFAULT_QA];
-
-  if (QUICK_ANSWERS_URL && /^https?:\/\//i.test(QUICK_ANSWERS_URL)) {
-    try{
-      const r = await fetch(QUICK_ANSWERS_URL, { cache:"no-store" });
-      if (r.ok){
-        const extra = await r.json();
-        for (const item of extra){
-          if (item?.pattern && (item?.reply || item?.a)) {
-            list.push({ pattern: new RegExp(item.pattern, "i"), reply: String(item.reply || item.a) });
-          }
-        }
-      }
-    }catch{/* tyst fallback */}
-  }
-  qaCache = list;
-  return qaCache;
-}
-
-// === SSE utilities ============================================================
-function wantsSSE(req) {
-  if (/\bstream=1\b/.test(req.url || "")) return true;
-  const accept = String(req.headers["accept"] || "");
-  return accept.includes("text/event-stream");
-}
-function sseHeaders(res) {
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-}
-function sseSend(res, event, data) {
-  if (event) res.write(`event: ${event}\n`);
-  res.write(`data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`);
-}
-
-// === Language helpers =========================================================
-function detectLangFromHeaderOrMessage(req, message="") {
-  const header = (req.headers["x-lang"] || "").toString().toLowerCase();
-  if (header.startsWith("sv")) return "sv";
-  if (header.startsWith("no") || header.startsWith("nb") || header.startsWith("nn")) return "no";
-  if (header.startsWith("en")) return "en";
-
-  const t = message.toLowerCase();
-  if (/norsk|norska|snakk norsk|skriv på norsk/.test(t)) return "no";
-  if (/english|engelska|write in english|switch to english/.test(t)) return "en";
-  if (/svenska|skriv på svenska/.test(t)) return "sv";
-
-  // default
-  return "sv";
-}
-
-function langInstruction(lang) {
-  if (lang === "sv") return "Svara alltid på svenska.";
-  if (lang === "no") return "Svar alltid på norsk bokmål.";
-  return "Always reply in clear, concise English.";
-}
-
-async function translateIfNeeded(text, targetLang) {
-  if (!text || targetLang === "sv") return text;
-  if (!OPENAI_API_KEY) return text; // fallback
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
-  try{
-    const payload = {
-      model: OPENAI_MODEL,
-      messages: [
-        { role:"system", content: "You are a translation assistant. Preserve links and numbers. Keep it concise." },
-        { role:"user", content: `Translate this into ${targetLang === "no" ? "Norwegian (bokmål)" : "English"}:\n\n${text}` }
-      ],
-      temperature: 0.0,
-      max_tokens: 300
-    };
-    const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
-      method:"POST",
-      headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-    clearTimeout(to);
-    const data = await r.json().catch(()=>null);
-    return data?.choices?.[0]?.message?.content?.trim() || text;
-  }catch{
-    clearTimeout(to);
-    return text;
-  }
-}
-
-// === HTTP handler =============================================================
-export default async function handler(req, res) {
-  // Basic CORS & security headers
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Session-Id, X-Lang");
-  res.setHeader("Cache-Control", "no-store");
-
-  if (req.method === "OPTIONS") return res.status(204).end();
-
-  const ip = (req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").toString().split(",")[0].trim();
-  if (!rateLimitOk(ip)) return res.status(429).json({ error: "Too Many Requests" });
-
-  if (req.method === "GET"){
-    if (req.url?.includes("reload=1")) qaCache = null;
-    const qa = await loadQuickAnswers();
-    return res.json({
-      ok:true,
-      route:"/api/curevia-chat",
-      qaCount:qa.length,
-      hasKey:Boolean(OPENAI_API_KEY),
-      model: OPENAI_MODEL,
-      streaming: true,
-      contactWebhook: Boolean(CONTACT_WEBHOOK_URL),
-      suggested: [
-        { label:"Hur funkar betalning?" },
-        { label:"Vad kostar det?" },
-        { label:"Registrera konsult" },
-        { label:"Registrera vårdgivare" }
-      ]
-    });
-  }
-
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
-  // Safe body parse (limit size)
-  let bodyRaw;
-  try{
-    bodyRaw = await new Promise((resolve, reject) => {
-      let d="";
-      req.on("data", c => {
-        d += c;
-        if (d.length > 64 * 1024) { // 64KB rå tak
-          reject(new Error("Payload too large"));
-          try { req.destroy(); } catch {}
-        }
-      });
-      req.on("end", () => resolve(d || "{}"));
-      req.on("error", reject);
-    });
-  } catch(e){
-    return res.status(413).json({ error: "Payload too large" });
-  }
-
-  let parsed;
-  try { parsed = JSON.parse(bodyRaw); }
-  catch { return res.status(400).json({ error:"Invalid JSON body" }); }
-
-  // ----- Contact submission endpoint (server-side) ----------------------------
-  if (parsed?.contact && typeof parsed.contact === "object") {
-    const c = parsed.contact;
-    if (!c.name || !c.email) {
-      return res.status(400).json({ error: "Missing contact.name or contact.email" });
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Curevia – Chat</title>
+  <style>
+    body { font-family: system-ui, Arial; background: var(--bg); margin:0 }
+    :root {
+      --bg: #f8fafc;
+      --bot: #f1f5f9;
+      --me: #2563eb;
+      --text: #0f172a;
+      --bubble-text: #111827;
     }
-    if (CONTACT_WEBHOOK_URL) {
-      try{
-        const r = await fetch(CONTACT_WEBHOOK_URL, {
-          method: "POST",
-          headers: { "Content-Type":"application/json" },
-          body: JSON.stringify({
-            source: "curevia-chat",
-            ip, ts: new Date().toISOString(),
-            contact: c
-          })
-        });
-        if (!r.ok) {
-          const txt = await r.text().catch(()=> "");
-          return res.status(502).json({ error: "Webhook error", details: txt });
-        }
-      } catch(e){
-        return res.status(502).json({ error: "Webhook unreachable" });
-      }
+    body.dark {
+      --bg: #0f172a;
+      --bot: #1e293b;
+      --me: #3b82f6;
+      --text: #f8fafc;
+      --bubble-text: #f8fafc;
     }
-    return res.status(202).json({ ok:true });
+    .wrap { max-width:720px;margin:0 auto;padding:24px }
+    .bubble { padding:12px 14px; border-radius:16px; margin:8px 0; max-width:80%; white-space:pre-wrap; }
+    .bot { background:var(--bot); color:var(--bubble-text); border-top-left-radius:4px }
+    .me { background:var(--me); color:#fff; margin-left:auto; border-top-right-radius:4px }
+    .row { display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:8px 0 }
+    input { flex:1; padding:12px; border:1px solid #cbd5e1; border-radius:12px }
+    button { padding:12px 16px; border:0; border-radius:12px; background:#111827; color:white; cursor:pointer }
+    .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+    .chip{background:#e2e8f0;border-radius:999px;padding:6px 10px;font-size:14px;cursor:pointer}
+    .dark-toggle { position:absolute; top:10px; right:10px; }
+    .copy-btn { font-size:12px; margin-top:4px; cursor:pointer; color:gray }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h3>Curevia Assistant <button id="darkToggle" class="dark-toggle">Mörkt läge</button></h3>
+    <div id="log"></div>
+    <div id="chips" class="chips"></div>
+    <div class="row">
+      <input id="inp" placeholder="Skriv ett meddelande..." />
+      <button id="btn" type="button">Skicka</button>
+    </div>
+  </div>
+
+<script>
+const API = "/api/curevia-chat";   // ✅ rätt API-rad
+
+const log = document.getElementById("log");
+const chipsEl = document.getElementById("chips");
+const inp = document.getElementById("inp");
+const btn = document.getElementById("btn");
+const darkToggle = document.getElementById("darkToggle");
+const sessionId = self.crypto?.randomUUID?.() || "sess-" + Date.now();
+
+function addBubble(text, who="bot"){
+  const div = document.createElement("div");
+  div.className = "bubble " + (who==="me"?"me":"bot");
+  div.innerText = text;
+  if (who !== "me" && text.length > 120) {
+    const copyBtn = document.createElement("div");
+    copyBtn.className = "copy-btn";
+    copyBtn.textContent = "📋 Kopiera";
+    copyBtn.onclick = () => navigator.clipboard.writeText(text);
+    div.appendChild(copyBtn);
   }
+  log.appendChild(div);
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+}
 
-  // ----- Chat flow ------------------------------------------------------------
-  let { message = "" } = parsed;
-  if (typeof message !== "string" || !message.trim()) {
-    return res.status(400).json({ error:"Missing 'message' string" });
+async function meta(){
+  try {
+    const r = await fetch(API, { headers: { "X-Session-Id": sessionId }});
+    const m = await r.json().catch(()=>({ suggested:[] }));
+    addBubble("Hej! 👋 Hur kan jag hjälpa till idag?");
+    (m.suggested||[]).forEach(c => {
+      const el = document.createElement("span");
+      el.className = "chip";
+      el.textContent = c.label;
+      el.onclick = () => send(c.label);
+      chipsEl.appendChild(el);
+    });
+  } catch(e) {
+    addBubble("Kunde inte nå servern just nu.");
   }
-  message = dePrompt(message).slice(0, MAX_INPUT_LEN);
+}
 
-  // Språk (från header eller uttryck i meddelandet)
-  const lang = detectLangFromHeaderOrMessage(req, message);
+async function send(text){
+  if (!text.trim()) return;
+  addBubble(text, "me");
+  inp.value = "";
 
-  // Sensitivt innehåll
-  if (hasSensitive(message)) {
-    const msg = lang === "no"
-      ? "Jeg kan dessverre ikke motta person- eller journalopplysninger her. Ta kontakt via en sikker kanal, så hjelper vi deg videre 💙"
-      : lang === "en"
-        ? "I can’t receive personal ID numbers or medical records here. Please contact us via a secure channel 💙"
-        : "Jag kan tyvärr inte ta emot person- eller journaluppgifter här. Hör av dig via en säker kanal så hjälper vi dig vidare 💙";
-    return res.json({ reply: msg });
-  }
+  const bubble = document.createElement("div");
+  bubble.className = "bubble bot";
+  log.appendChild(bubble);
 
-  // Direkt: nettolönefråga?
-  const net = detectNetSalaryQuestion(message);
-  if (net) {
-    const intentNet = detectIntent(message);
-    const replyNet = await translateIfNeeded(net, lang);
-    return res.json({ reply: polishReply(replyNet, intentNet, shouldSuggestCTA(message, intentNet)) });
-  }
-
-  // Intent & quick answers
-  const intent = detectIntent(message);
-
-  if (intent === "contact_me") {
-    const reply = lang === "no"
-      ? "Selvfølgelig! Legg igjen kontaktinfo så hører vi av oss snart."
-      : lang === "en"
-        ? "Absolutely! Leave your details and we’ll get back to you shortly."
-        : "Absolut! Fyll i dina kontaktuppgifter så hör vi av oss inom kort.";
-    return res.json({ reply, action: "open_contact_form" });
-  }
-
-  if (intent === "register_provider") {
-    const base = `Här kan du registrera din verksamhet: ${LINKS.regProvider}`;
-    const tr = await translateIfNeeded(base, lang);
-    return res.json({ reply: polishReply(tr, intent, false) });
-  }
-  if (intent === "register_consult") {
-    const base = `Toppen! Registrera din konsultprofil här: ${LINKS.regConsult}`;
-    const tr = await translateIfNeeded(base, lang);
-    return res.json({ reply: polishReply(tr, intent, false) });
-  }
-
-  const qa = await loadQuickAnswers();
-  const hit = qa.find(q => q.pattern.test(message));
-  if (hit) {
-    const tr = await translateIfNeeded(hit.reply, lang);
-    return res.json({ reply: polishReply(tr, intent, shouldSuggestCTA(message,intent)) });
-  }
-
-  const fuzzyHit = fuzzyFromQAList(message, qa.map(x => ({ q: x.pattern.source, a: x.reply })));
-  if (fuzzyHit) {
-    const tr = await translateIfNeeded(fuzzyHit, lang);
-    return res.json({ reply: polishReply(tr, intent, shouldSuggestCTA(message,intent)) });
-  }
-
-  // OpenAI fallback
-  if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
-
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
-
-  // språk-instruktion in i systemprompten
-  const SYSTEM_PROMPT = `${SYSTEM_PROMPT_BASE}\n${langInstruction(lang)}`;
-
-  const payloadBase = {
-    model: OPENAI_MODEL,
-    messages: [
-      { role:"system", content: `${SYSTEM_PROMPT}\nMål för svaret: ${
-        intent.startsWith("provider") ? `Hjälp vårdgivare vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
-        intent.startsWith("consult")  ? `Hjälp konsulten vidare på ett vänligt sätt. CTA endast om det känns naturligt.` :
-                                        `Ge ett kort, vänligt svar. CTA endast om det känns naturligt.`
-      }` },
-      { role:"user", content: message }
-    ],
-    temperature: 0.4,
-    max_tokens: 220
-  };
+  const typing = document.createElement("span");
+  typing.textContent = "…";
+  bubble.appendChild(typing);
 
   try {
-    if (wantsSSE(req)) {
-      // --- STREAMING (SSE passthrough) ---------------------------------------
-      sseHeaders(res);
-      sseSend(res, "meta", { model: OPENAI_MODEL });
+    const r = await fetch(API + "?stream=1", {
+      method: "POST",
+      headers: {
+        "Content-Type":"application/json",
+        "X-Session-Id": sessionId,
+        "X-Lang": navigator.language || "sv"
+      },
+      body: JSON.stringify({ message: text })
+    });
 
-      const payload = { ...payloadBase, stream: true };
-      const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
-        method:"POST",
-        headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      }).catch(e => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); });
-      if (!r.ok || !r.body) {
-        const errTxt = await r.text().catch(()=> "");
-        sseSend(res, "error", { error: "Upstream error", details: errTxt });
-        res.end(); clearTimeout(to); return;
-      }
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("text/event-stream")) {
+      typing.remove();
+      bubble.innerText = "Ett fel uppstod när jag försökte nå servern.";
+      return;
+    }
 
-      const reader = r.body.getReader();
-      let full = "";
-      const decoder = new TextDecoder();
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let done = false;
+    let fullText = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-
+    while(!done){
+      const {value, done:doneNow} = await reader.read();
+      done = doneNow;
+      if (value){
+        const chunk = decoder.decode(value, {stream: true});
         const lines = chunk.split(/\r?\n/);
-        for (const line of lines) {
+        for (const line of lines){
           if (!line) continue;
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6); // behåll whitespace
-            if (data === "[DONE]") continue;
+          if (line.startsWith("data:")){
+            let payload = line.slice(5);
+            if (payload.startsWith(" ")) payload = payload.slice(1);
+            if (payload === "[DONE]") continue;
             try {
-              const json = JSON.parse(data);
-              const delta = json.choices?.[0]?.delta?.content || "";
-              if (delta) {
-                full += delta;
-                sseSend(res, "token", delta); // frontend bevarar mellanslag
+              const json = JSON.parse(payload);
+              const delta = json.choices?.[0]?.delta?.content;
+              if (delta){
+                fullText += delta;
+                typing.remove();
+                bubble.innerText = fullText; // ✅ behåller mellanslag
               }
-            } catch {/* ignore parse errors */}
+            } catch(e){}
           }
         }
       }
-
-      clearTimeout(to);
-
-      const final = polishReply(full.trim(), intent, shouldSuggestCTA(message,intent));
-      sseSend(res, "final", { reply: final });
-      res.end();
-      return;
-
-    } else {
-      // --- VANLIGT (icke-stream) ---------------------------------------------
-      const r = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
-        method:"POST",
-        headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
-        body: JSON.stringify(payloadBase),
-        signal: controller.signal
-      }).catch(e => { throw (e.name === "AbortError" ? new Error("Upstream timeout") : e); });
-
-      clearTimeout(to);
-
-      let data;
-      try { data = await r.json(); }
-      catch { return res.status(502).json({ error:"Upstream parse error" }); }
-
-      if (!r.ok) {
-        return res.status(502).json({ error: data || "Upstream error" });
-      }
-
-      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
-      const reply = polishReply(raw, intent, shouldSuggestCTA(message,intent));
-      return res.json({ reply });
     }
 
-  } catch(e){
-    clearTimeout(to);
-    if (wantsSSE(req)) {
-      try { sseSend(res, "error", { error: String(e?.message || e) }); } catch {}
-      try { res.end(); } catch {}
-      return;
+    if (fullText.length > 120) {
+      const copyBtn = document.createElement("div");
+      copyBtn.className = "copy-btn";
+      copyBtn.textContent = "📋 Kopiera";
+      copyBtn.onclick = () => navigator.clipboard.writeText(fullText);
+      bubble.appendChild(copyBtn);
     }
-    return res.status(500).json({ error:String(e?.message || e) });
+
+  } catch(e) {
+    typing.remove();
+    bubble.innerText = "Kunde inte få svar just nu.";
   }
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  btn.addEventListener("click", () => send(inp.value));
+  inp.addEventListener("keydown", (e)=>{ if(e.key==="Enter") send(inp.value); });
+  darkToggle.addEventListener("click", () => {
+    document.body.classList.toggle("dark");
+  });
+  meta();
+});
+</script>
+</body>
+</html>
