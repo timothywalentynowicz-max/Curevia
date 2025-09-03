@@ -4,63 +4,82 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Curevia – Chat</title>
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <style>
     :root{
-      --bg:#f6f7fb; --bot:#f1f5f9; --user:#2563eb; --text:#0f172a; --muted:#64748b;
-      --shadow:0 6px 24px rgba(15,23,42,.06); --radius:18px;
+      --bg:#f6f7fb; --card:#ffffff; --bot:#f1f5f9; --user:#2563eb; --text:#0f172a; --muted:#64748b;
+      --border:#e2e8f0; --chip:#e2e8f0; --chip-b:#cbd5e1; --btn:#0f172a; --shadow:0 6px 24px rgba(15,23,42,.06);
+      --radius:18px;
     }
+    /* Dark mode overrides */
+    .dark{
+      --bg:#0b1220; --card:#0f172a; --bot:#0b1a33; --user:#3b82f6; --text:#e5e7eb; --muted:#94a3b8;
+      --border:#1f2a44; --chip:#12203a; --chip-b:#213050; --btn:#111827; --shadow:0 6px 24px rgba(2,6,23,.4);
+    }
+
     *{box-sizing:border-box}
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;background:var(--bg);margin:0;color:var(--text)}
     .shell{max-width:820px;margin:0 auto;padding:24px}
-    .header{display:flex;align-items:center;gap:12px;margin:0 0 10px}
+    .header{display:flex;align-items:center;justify-content:space-between;margin:0 0 10px}
+    .brand{display:flex;align-items:center;gap:12px}
     .logo{width:36px;height:36px;border-radius:10px;background:#0ea5e9}
     .title{font-weight:700}
     .subtitle{font-size:12px;color:var(--muted)}
-    .card{background:#fff;border:1px solid #e2e8f0;border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
-    .chips{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid #e2e8f0;background:#f8fafc}
-    .chip{background:#e2e8f0;border:1px solid #cbd5e1;border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
+    .toggle{border:1px solid var(--border); background:var(--card); color:var(--text); padding:8px 12px; border-radius:999px; cursor:pointer}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
+    .chips{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border);background:color-mix(in srgb, var(--card) 80%, var(--bg))}
+    .chip{background:var(--chip);border:1px solid var(--chip-b);border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
     .log{height:58vh;overflow:auto;padding:16px}
-    .bubble{padding:12px 14px;border-radius:var(--radius);margin:8px 0;max-width:80%;line-height:1.35;white-space:pre-wrap;word-wrap:break-word}
+    .bubble{position:relative;padding:12px 40px 12px 14px;border-radius:var(--radius);margin:8px 0;max-width:80%;line-height:1.35;white-space:pre-wrap;word-wrap:break-word}
     .bot{background:var(--bot);border-top-left-radius:8px}
     .me{background:var(--user);color:#fff;margin-left:auto;border-top-right-radius:8px}
     .cite{display:block;font-size:11px;margin-top:6px;opacity:.75}
-    .row{display:flex;gap:10px;padding:12px;border-top:1px solid #e2e8f0;background:#fff}
-    .in{flex:1;padding:12px 14px;border:1px solid #cbd5e1;border-radius:14px}
-    .btn{padding:12px 16px;border:0;border-radius:14px;background:#0f172a;color:#fff}
-    .foot{font-size:12px;color:var(--muted);padding:8px 16px;background:#fff;border-top:1px solid #e2e8f0}
+    .row{display:flex;gap:10px;padding:12px;border-top:1px solid var(--border);background:var(--card)}
+    .in{flex:1;padding:12px 14px;border:1px solid var(--chip-b);background:transparent;color:var(--text);border-radius:14px}
+    .btn{padding:12px 16px;border:0;border-radius:14px;background:var(--btn);color:#fff;cursor:pointer}
+    .foot{font-size:12px;color:var(--muted);padding:8px 16px;background:var(--card);border-top:1px solid var(--border)}
     @media (max-width:640px){ .log{height:60vh} }
 
-    /* Typing animation (fallback medan vi väntar på första token) */
+    /* Typing animation */
     .typing-wrap{display:inline-flex;gap:6px;align-items:center}
     .dot{width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:blink 1.2s infinite}
     .dot:nth-child(2){animation-delay:.2s}
     .dot:nth-child(3){animation-delay:.4s}
-    @keyframes blink{
-      0%,100%{opacity:.25; transform:translateY(0)}
-      20%    {opacity:1;    transform:translateY(-2px)}
+    @keyframes blink{ 0%,100%{opacity:.25;transform:translateY(0)} 20%{opacity:1;transform:translateY(-2px)} }
+
+    /* Copy button */
+    .copy{
+      position:absolute; right:8px; top:8px;
+      border:1px solid var(--chip-b); background:transparent; color:var(--muted);
+      border-radius:10px; padding:4px 8px; font-size:12px; cursor:pointer;
     }
+    .copy.ok{ color:#16a34a; border-color:#16a34a }
+    .copy.err{ color:#ef4444; border-color:#ef4444 }
 
     /* Modal */
     .modal-back{position:fixed;inset:0;background:rgba(2,6,23,.4);display:none;align-items:center;justify-content:center;padding:16px}
-    .modal{background:#fff;border-radius:16px;box-shadow:var(--shadow);max-width:520px;width:100%}
-    .modal .head{padding:14px 16px;border-bottom:1px solid #e2e8f0;font-weight:600}
+    .modal{background:var(--card);color:var(--text);border-radius:16px;box-shadow:var(--shadow);max-width:520px;width:100%;border:1px solid var(--border)}
+    .modal .head{padding:14px 16px;border-bottom:1px solid var(--border);font-weight:600}
     .modal .body{padding:16px}
     .modal .row{display:flex;gap:8px;padding:0;border:0;background:none}
     .field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
-    .field input,.field textarea{padding:10px;border:1px solid #cbd5e1;border-radius:12px;width:100%}
-    .modal .actions{display:flex;gap:8px;justify-content:flex-end;padding:14px 16px;border-top:1px solid #e2e8f0}
-    .link{color:#2563eb;text-decoration:underline}
+    .field input,.field textarea{padding:10px;border:1px solid var(--chip-b);border-radius:12px;width:100%;background:transparent;color:var(--text)}
+    .modal .actions{display:flex;gap:8px;justify-content:flex-end;padding:14px 16px;border-top:1px solid var(--border)}
+    .link{color:#3b82f6;text-decoration:underline}
   </style>
 </head>
 <body>
   <div class="shell">
     <div class="header">
-      <div class="logo"></div>
-      <div>
-        <div class="title">Curevia Assistant</div>
-        <div class="subtitle">Snabb hjälp • Demo när du vill</div>
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <div class="title">Curevia Assistant</div>
+          <div class="subtitle">Snabb hjälp • Demo när du vill</div>
+        </div>
       </div>
+      <button id="theme" class="toggle" aria-label="Växla mörkt läge">🌗 Mörkt läge</button>
     </div>
 
     <div class="card">
@@ -98,7 +117,7 @@
         </div>
       </div>
       <div class="actions">
-        <button id="cancel" class="btn" style="background:#e2e8f0;color:#0f172a">Avbryt</button>
+        <button id="cancel" class="btn" style="background:var(--chip);color:var(--text)">Avbryt</button>
         <button id="send" class="btn">Skicka</button>
       </div>
     </div>
@@ -111,7 +130,21 @@ const chipsEl = document.getElementById("chips");
 const inp = document.getElementById("inp");
 const btn = document.getElementById("btn");
 const footnote = document.getElementById("footnote");
+const themeBtn = document.getElementById("theme");
 const sessionId = self.crypto?.randomUUID?.() || ("sess-" + Date.now());
+
+// ----- Dark mode toggle (sparas i localStorage)
+(function initTheme(){
+  const saved = localStorage.getItem("cv_theme");
+  if (saved === "dark") document.documentElement.classList.add("dark");
+  themeBtn.textContent = document.documentElement.classList.contains("dark") ? "☀️ Ljust läge" : "🌗 Mörkt läge";
+})();
+themeBtn.onclick = () => {
+  document.documentElement.classList.toggle("dark");
+  const isDark = document.documentElement.classList.contains("dark");
+  localStorage.setItem("cv_theme", isDark ? "dark" : "light");
+  themeBtn.textContent = isDark ? "☀️ Ljust läge" : "🌗 Mörkt läge";
+};
 
 // Modal refs
 const backdrop = document.getElementById("backdrop");
@@ -123,10 +156,33 @@ document.getElementById("send").onclick = submitContact;
 
 function toggleModal(open){ backdrop.style.display = open ? "flex" : "none"; }
 
+// Hjälpfunktion: lägg till kopiera-knapp på bot-bubblor
+function attachCopyButton(div){
+  const btn = document.createElement("button");
+  btn.className = "copy";
+  btn.textContent = "Kopiera";
+  btn.title = "Kopiera svar";
+  btn.onclick = async (e)=>{
+    e.stopPropagation();
+    try{
+      // kopiera endast själva svaret, inte citations-länkarna
+      const text = div.childNodes[0]?.nodeValue || div.innerText;
+      await navigator.clipboard.writeText(text.trim());
+      btn.classList.remove("err"); btn.classList.add("ok"); btn.textContent = "Kopierat ✓";
+      setTimeout(()=>{ btn.classList.remove("ok"); btn.textContent = "Kopiera"; }, 1500);
+    }catch{
+      btn.classList.remove("ok"); btn.classList.add("err"); btn.textContent = "Fel";
+      setTimeout(()=>{ btn.classList.remove("err"); btn.textContent = "Kopiera"; }, 1500);
+    }
+  };
+  div.appendChild(btn);
+}
+
 function addBubble(text, who="bot", citations){
   const div = document.createElement("div");
   div.className = "bubble " + (who==="me"?"me":"bot");
   div.textContent = text;
+  if (who !== "me") attachCopyButton(div);
   if (citations && citations.length){
     citations.forEach(c=>{
       const a = document.createElement("a");
@@ -141,7 +197,7 @@ function addBubble(text, who="bot", citations){
   return div;
 }
 
-/* --- Skrivanimering (fallback innan första token kommer) --- */
+/* Typing bubble (visas tills vi får svar) */
 function typingBubble(){
   const div = document.createElement("div");
   div.className = "bubble bot";
@@ -149,9 +205,11 @@ function typingBubble(){
   wrap.className = "typing-wrap";
   wrap.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
   div.appendChild(wrap);
+  attachCopyButton(div); // visuellt konsekvent (gör inget om man kopierar “...”)
   log.appendChild(div);
   log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
-  return { destroy(){ div.remove(); } };
+  let timer = setTimeout(()=>{ div.remove(); }, 30000);
+  return { destroy(){ clearTimeout(timer); div.remove(); } };
 }
 
 async function meta(){
@@ -171,19 +229,16 @@ async function meta(){
   }
 }
 
-/* --------- STREAMANDE SVAR (SSE via fetch stream) ---------- */
+/* --------- Skicka med SSE + fallback till JSON ---------- */
 async function send(text){
   if (!text?.trim()) return;
   addBubble(text, "me");
   inp.value = "";
 
-  // Förbered en bot-bubbla som vi fyller på med tokens
+  // Förbered en bot-bubbla som vi fyller på
   const bubble = addBubble("", "bot");
-  let receivedAny = false;
-  let citationsMeta = [];
-
-  // Starta en temporär skriv-animering tills första token landar
   const typing = typingBubble();
+  let gotAnyToken = false;
 
   try{
     const r = await fetch(API + "?stream=1", {
@@ -196,8 +251,29 @@ async function send(text){
       body: JSON.stringify({ message: text })
     });
 
-    if (!r.body) throw new Error("No stream");
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
 
+    // 🔁 FALLBACK: om backend INTE skickar SSE (snabb-QA), hantera som JSON
+    if (!ct.includes("text/event-stream")) {
+      const data = await r.json();
+      typing.destroy();
+      bubble.textContent = data.reply || "Oj, något gick fel.";
+      if (data.citations?.length) {
+        data.citations.forEach(c=>{
+          const a = document.createElement("a");
+          a.href = c.url; a.target="_blank"; a.rel="noreferrer"; a.className="cite link";
+          a.textContent = `[${c.id}] ${c.title}`;
+          bubble.appendChild(a);
+        });
+        footnote.style.display = "block";
+      }
+      if (data.action === "open_url" && data.url) window.open(data.url, "_blank", "noopener,noreferrer");
+      if (data.action === "open_contact_form") toggleModal(true);
+      return;
+    }
+
+    // ✅ SSE-väg
+    if (!r.body) throw new Error("No stream body");
     const reader = r.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buf = "";
@@ -207,7 +283,6 @@ async function send(text){
       if (done) break;
       buf += decoder.decode(value, { stream:true });
 
-      // Parsar SSE (event: <name>\n data: <json>\n\n)
       let idx;
       while ((idx = buf.indexOf("\n\n")) >= 0) {
         const raw = buf.slice(0, idx);
@@ -215,90 +290,4 @@ async function send(text){
 
         const lines = raw.split(/\r?\n/);
         let event = "message", data = "";
-        for (const line of lines) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) data += line.slice(5).trim();
-        }
-
-        if (!data) continue;
-
-        if (event === "meta") {
-          // { model, schema, citations? }
-          try { const m = JSON.parse(data); citationsMeta = m.citations || []; } catch {}
-        }
-        else if (event === "token") {
-          typing.destroy(); // första token → ta bort "...”
-          receivedAny = true;
-          bubble.textContent += data;                // Lägg till token
-          log.scrollTo({ top: log.scrollHeight });   // Håll scroll i botten
-        }
-        else if (event === "action") {
-          // { action: "open_url", url }
-          try {
-            const a = JSON.parse(data);
-            if (a.action === "open_url" && a.url) window.open(a.url, "_blank", "noopener,noreferrer");
-            if (a.action === "open_contact_form") toggleModal(true);
-          } catch {}
-        }
-        else if (event === "final") {
-          typing.destroy();
-          // final kan vara sträng eller objekt; vår backend skickar ett objekt
-          try {
-            const f = JSON.parse(data);
-            if (!receivedAny && f.reply) bubble.textContent = f.reply; // om vi inte streamat något
-            // citations
-            const cites = f.citations || citationsMeta || [];
-            if (cites && cites.length) {
-              cites.forEach(c=>{
-                const a = document.createElement("a");
-                a.href = c.url; a.target="_blank"; a.rel="noreferrer"; a.className="cite link";
-                a.textContent = `[${c.id}] ${c.title}`;
-                bubble.appendChild(a);
-              });
-              footnote.style.display = "block";
-            }
-          } catch { /* om final var bara text, ignorera */ }
-        }
-        else if (event === "error") {
-          typing.destroy();
-          addBubble("Tekniskt fel – prova igen.", "bot");
-        }
-      }
-    }
-
-  }catch(err){
-    typing.destroy();
-    bubble.textContent = "Tekniskt fel – prova igen.";
-  }
-}
-
-async function submitContact(){
-  const name = fName.value.trim();
-  const email = fEmail.value.trim();
-  const message = fMsg.value.trim();
-  if (!name || !email) { alert("Fyll i namn och e-post"); return; }
-  try{
-    const r = await fetch(API, {
-      method: "POST",
-      headers: { "Content-Type":"application/json", "X-Session-Id": sessionId },
-      body: JSON.stringify({ contact: { name, email, message} })
-    });
-    if (r.ok){
-      toggleModal(false);
-      addBubble("Tack! Vi hör av oss inom kort 💙");
-      fName.value = ""; fEmail.value = ""; fMsg.value = "";
-    } else {
-      addBubble("Kunde inte skicka just nu – maila oss gärna så löser vi det.", "bot");
-    }
-  }catch{
-    addBubble("Kunde inte skicka just nu – prova igen senare.", "bot");
-  }
-}
-
-btn.onclick = () => send(inp.value);
-inp.addEventListener("keydown", (e)=>{ if(e.key==="Enter") send(inp.value); });
-
-meta();
-</script>
-</body>
-</html>
+        for (const line of lines
