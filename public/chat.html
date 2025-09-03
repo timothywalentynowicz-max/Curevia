@@ -21,7 +21,7 @@
     .chips{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid #e2e8f0;background:#f8fafc}
     .chip{background:#e2e8f0;border:1px solid #cbd5e1;border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
     .log{height:58vh;overflow:auto;padding:16px}
-    .bubble{padding:12px 14px;border-radius:var(--radius);margin:8px 0;max-width:80%;line-height:1.35;white-space:pre-wrap}
+    .bubble{padding:12px 14px;border-radius:var(--radius);margin:8px 0;max-width:80%;line-height:1.35;white-space:pre-wrap;word-wrap:break-word}
     .bot{background:var(--bot);border-top-left-radius:8px}
     .me{background:var(--user);color:#fff;margin-left:auto;border-top-right-radius:8px}
     .cite{display:block;font-size:11px;margin-top:6px;opacity:.75}
@@ -31,7 +31,7 @@
     .foot{font-size:12px;color:var(--muted);padding:8px 16px;background:#fff;border-top:1px solid #e2e8f0}
     @media (max-width:640px){ .log{height:60vh} }
 
-    /* Typing animation (tre “bubblor” som blinkar) */
+    /* Typing animation (fallback medan vi väntar på första token) */
     .typing-wrap{display:inline-flex;gap:6px;align-items:center}
     .dot{width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:blink 1.2s infinite}
     .dot:nth-child(2){animation-delay:.2s}
@@ -138,10 +138,11 @@ function addBubble(text, who="bot", citations){
   }
   log.appendChild(div);
   log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+  return div;
 }
 
-/* --- SKRIVANIMERING: start/stop --- */
-function startTyping(){
+/* --- Skrivanimering (fallback innan första token kommer) --- */
+function typingBubble(){
   const div = document.createElement("div");
   div.className = "bubble bot";
   const wrap = document.createElement("div");
@@ -150,9 +151,7 @@ function startTyping(){
   div.appendChild(wrap);
   log.appendChild(div);
   log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
-  return {
-    stop(){ div.remove(); }
-  };
+  return { destroy(){ div.remove(); } };
 }
 
 async function meta(){
@@ -172,32 +171,104 @@ async function meta(){
   }
 }
 
+/* --------- STREAMANDE SVAR (SSE via fetch stream) ---------- */
 async function send(text){
   if (!text?.trim()) return;
   addBubble(text, "me");
   inp.value = "";
 
-  const typing = startTyping(); // visa “…” medan vi väntar
+  // Förbered en bot-bubbla som vi fyller på med tokens
+  const bubble = addBubble("", "bot");
+  let receivedAny = false;
+  let citationsMeta = [];
+
+  // Starta en temporär skriv-animering tills första token landar
+  const typing = typingBubble();
 
   try{
-    const r = await fetch(API, {
+    const r = await fetch(API + "?stream=1", {
       method: "POST",
-      headers: { "Content-Type":"application/json", "X-Session-Id": sessionId },
+      headers: {
+        "Content-Type":"application/json",
+        "X-Session-Id": sessionId,
+        "Accept":"text/event-stream"
+      },
       body: JSON.stringify({ message: text })
     });
-    const data = await r.json();
-    typing.stop(); // ta bort “…” innan vi visar svaret
 
-    addBubble(data.reply || "Oj, något gick fel.", "bot", data.citations||[]);
-    if (data.action === "open_url" && data.url) {
-      window.open(data.url, "_blank", "noopener,noreferrer");
+    if (!r.body) throw new Error("No stream");
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buf = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream:true });
+
+      // Parsar SSE (event: <name>\n data: <json>\n\n)
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+
+        const lines = raw.split(/\r?\n/);
+        let event = "message", data = "";
+        for (const line of lines) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+
+        if (!data) continue;
+
+        if (event === "meta") {
+          // { model, schema, citations? }
+          try { const m = JSON.parse(data); citationsMeta = m.citations || []; } catch {}
+        }
+        else if (event === "token") {
+          typing.destroy(); // första token → ta bort "...”
+          receivedAny = true;
+          bubble.textContent += data;                // Lägg till token
+          log.scrollTo({ top: log.scrollHeight });   // Håll scroll i botten
+        }
+        else if (event === "action") {
+          // { action: "open_url", url }
+          try {
+            const a = JSON.parse(data);
+            if (a.action === "open_url" && a.url) window.open(a.url, "_blank", "noopener,noreferrer");
+            if (a.action === "open_contact_form") toggleModal(true);
+          } catch {}
+        }
+        else if (event === "final") {
+          typing.destroy();
+          // final kan vara sträng eller objekt; vår backend skickar ett objekt
+          try {
+            const f = JSON.parse(data);
+            if (!receivedAny && f.reply) bubble.textContent = f.reply; // om vi inte streamat något
+            // citations
+            const cites = f.citations || citationsMeta || [];
+            if (cites && cites.length) {
+              cites.forEach(c=>{
+                const a = document.createElement("a");
+                a.href = c.url; a.target="_blank"; a.rel="noreferrer"; a.className="cite link";
+                a.textContent = `[${c.id}] ${c.title}`;
+                bubble.appendChild(a);
+              });
+              footnote.style.display = "block";
+            }
+          } catch { /* om final var bara text, ignorera */ }
+        }
+        else if (event === "error") {
+          typing.destroy();
+          addBubble("Tekniskt fel – prova igen.", "bot");
+        }
+      }
     }
-    if (data.action === "open_contact_form") {
-      toggleModal(true);
-    }
-  }catch{
-    typing.stop();
-    addBubble("Tekniskt fel – prova igen.", "bot");
+
+  }catch(err){
+    typing.destroy();
+    bubble.textContent = "Tekniskt fel – prova igen.";
   }
 }
 
