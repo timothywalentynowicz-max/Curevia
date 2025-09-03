@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Curevia – Chat</title>
+  <style>
+    body{font-family:system-ui, Arial; background:#f8fafc; margin:0}
+    .wrap{max-width:720px;margin:0 auto;padding:24px}
+    .bubble{padding:12px 14px;border-radius:16px;margin:8px 0;max-width:80%}
+    .bot{background:#eef2ff;color:#111827;border-top-left-radius:4px}
+    .me{background:#2563eb;color:#fff;margin-left:auto;border-top-right-radius:4px}
+    .row{display:flex;gap:8px;position:sticky;bottom:0;background:#f8fafc;padding:8px 0}
+    input{flex:1;padding:12px;border:1px solid #cbd5e1;border-radius:12px}
+    button{padding:12px 16px;border:0;border-radius:12px;background:#111827;color:white}
+    .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+    .chip{background:#e2e8f0;border-radius:999px;padding:6px 10px;font-size:14px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="log"></div>
+    <div id="chips" class="chips"></div>
+    <div class="row">
+      <input id="inp" placeholder="Skriv ett meddelande..." />
+      <button id="btn">Skicka</button>
+    </div>
+  </div>
+
+<script>
+const API = "/api/curevia-chat";
+const log = document.getElementById("log");
+const chipsEl = document.getElementById("chips");
+const inp = document.getElementById("inp");
+const btn = document.getElementById("btn");
+const sessionId = self.crypto?.randomUUID?.() || "sess-" + Date.now();
+
+function addBubble(text, who="bot"){
+  const div = document.createElement("div");
+  div.className = "bubble " + (who==="me"?"me":"bot");
+  div.textContent = text;
+  log.appendChild(div);
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+}
+
+async function meta(){
+  const r = await fetch(API, { headers: { "X-Session-Id": sessionId }});
+  const m = await r.json().catch(()=>({ suggested:[] }));
+  addBubble("Hej! 👋 Hur kan jag hjälpa till idag?");
+  (m.suggested||[]).forEach(c => {
+    const el = document.createElement("span");
+    el.className = "chip";
+    el.textContent = c.label;
+    el.onclick = () => send(c.label);
+    chipsEl.appendChild(el);
+  });
+}
+
+async function send(text){
+  if (!text.trim()) return;
+  addBubble(text, "me");
+  inp.value = "";
+  const r = await fetch(API, {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "X-Session-Id": sessionId },
+    body: JSON.stringify({ message: text })
+  });
+  const data = await r.json().catch(()=>({ reply:"Oj, något gick fel." }));
+  addBubble(data.reply || "Oj, något gick fel.");
+  if (data.action === "open_url" && data.url) {
+    window.open(data.url, "_blank", "noopener,noreferrer");
+  }
+  if (data.action === "open_contact_form") {
+    alert("Kontaktformulär skulle öppnas här."); // byt mot din modal
+  }
+}
+
+btn.onclick = () => send(inp.value);
+inp.addEventListener("keydown", (e)=>{ if(e.key==="Enter") send(inp.value); });
+
+meta();
+</script>
+</body>
+</html>
