@@ -1,1 +1,52 @@
+name: Build RAG index (nightly)
+
+on:
+  schedule:
+    # 02:00 UTC ≈ 03:00 (CET vinter) / 04:00 (CEST sommar) i Sverige
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write    # behövs för att committa/pusha
+
+concurrency:
+  group: build-rag
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Om du inte har dependencies kan denna hoppas över – men okej att köra
+      - name: Install deps (if any)
+        run: npm ci || true
+
+      - name: Build RAG index
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_EMBED_MODEL: text-embedding-3-small
+        run: |
+          node scripts/build-rag-index.mjs
+          mkdir -p public
+          cp .rag/curevia-rag-index.json public/curevia-rag-index.json
+
+      - name: Commit changes (if any)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet public/curevia-rag-index.json; then
+            git add public/curevia-rag-index.json
+            git commit -m "chore(rag): nightly update of curevia-rag-index.json"
+            git push
+          else
+            echo "No changes in RAG index; nothing to commit."
+          fi
 
