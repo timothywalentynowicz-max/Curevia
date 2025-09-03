@@ -4,26 +4,103 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Curevia – Chat</title>
+  <meta name="color-scheme" content="light">
   <style>
-    body{font-family:system-ui, Arial; background:#f8fafc; margin:0}
-    .wrap{max-width:720px;margin:0 auto;padding:24px}
-    .bubble{padding:12px 14px;border-radius:16px;margin:8px 0;max-width:80%}
-    .bot{background:#eef2ff;color:#111827;border-top-left-radius:4px}
-    .me{background:#2563eb;color:#fff;margin-left:auto;border-top-right-radius:4px}
-    .row{display:flex;gap:8px;position:sticky;bottom:0;background:#f8fafc;padding:8px 0}
-    input{flex:1;padding:12px;border:1px solid #cbd5e1;border-radius:12px}
-    button{padding:12px 16px;border:0;border-radius:12px;background:#111827;color:white}
-    .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-    .chip{background:#e2e8f0;border-radius:999px;padding:6px 10px;font-size:14px;cursor:pointer}
+    :root{
+      --bg:#f6f7fb; --bot:#f1f5f9; --user:#2563eb; --text:#0f172a; --muted:#64748b;
+      --shadow:0 6px 24px rgba(15,23,42,.06); --radius:18px;
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;background:var(--bg);margin:0;color:var(--text)}
+    .shell{max-width:820px;margin:0 auto;padding:24px}
+    .header{display:flex;align-items:center;gap:12px;margin:0 0 10px}
+    .logo{width:36px;height:36px;border-radius:10px;background:#0ea5e9}
+    .title{font-weight:700}
+    .subtitle{font-size:12px;color:var(--muted)}
+    .card{background:#fff;border:1px solid #e2e8f0;border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
+    .chips{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid #e2e8f0;background:#f8fafc}
+    .chip{background:#e2e8f0;border:1px solid #cbd5e1;border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
+    .log{height:58vh;overflow:auto;padding:16px}
+    .bubble{padding:12px 14px;border-radius:var(--radius);margin:8px 0;max-width:80%;line-height:1.35;white-space:pre-wrap}
+    .bot{background:var(--bot);border-top-left-radius:8px}
+    .me{background:var(--user);color:#fff;margin-left:auto;border-top-right-radius:8px}
+    .cite{display:block;font-size:11px;margin-top:6px;opacity:.75}
+    .row{display:flex;gap:10px;padding:12px;border-top:1px solid #e2e8f0;background:#fff}
+    .in{flex:1;padding:12px 14px;border:1px solid #cbd5e1;border-radius:14px}
+    .btn{padding:12px 16px;border:0;border-radius:14px;background:#0f172a;color:#fff}
+    .foot{font-size:12px;color:var(--muted);padding:8px 16px;background:#fff;border-top:1px solid #e2e8f0}
+    @media (max-width:640px){ .log{height:60vh} }
+
+    /* Typing animation (tre “bubblor” som blinkar) */
+    .typing-wrap{display:inline-flex;gap:6px;align-items:center}
+    .dot{width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:blink 1.2s infinite}
+    .dot:nth-child(2){animation-delay:.2s}
+    .dot:nth-child(3){animation-delay:.4s}
+    @keyframes blink{
+      0%,100%{opacity:.25; transform:translateY(0)}
+      20%    {opacity:1;    transform:translateY(-2px)}
+    }
+
+    /* Modal */
+    .modal-back{position:fixed;inset:0;background:rgba(2,6,23,.4);display:none;align-items:center;justify-content:center;padding:16px}
+    .modal{background:#fff;border-radius:16px;box-shadow:var(--shadow);max-width:520px;width:100%}
+    .modal .head{padding:14px 16px;border-bottom:1px solid #e2e8f0;font-weight:600}
+    .modal .body{padding:16px}
+    .modal .row{display:flex;gap:8px;padding:0;border:0;background:none}
+    .field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+    .field input,.field textarea{padding:10px;border:1px solid #cbd5e1;border-radius:12px;width:100%}
+    .modal .actions{display:flex;gap:8px;justify-content:flex-end;padding:14px 16px;border-top:1px solid #e2e8f0}
+    .link{color:#2563eb;text-decoration:underline}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div id="log"></div>
-    <div id="chips" class="chips"></div>
-    <div class="row">
-      <input id="inp" placeholder="Skriv ett meddelande..." />
-      <button id="btn">Skicka</button>
+  <div class="shell">
+    <div class="header">
+      <div class="logo"></div>
+      <div>
+        <div class="title">Curevia Assistant</div>
+        <div class="subtitle">Snabb hjälp • Demo när du vill</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="chips" class="chips"></div>
+
+      <div id="log" class="log"></div>
+
+      <div class="row">
+        <input id="inp" class="in" placeholder="Ställ en fråga…" />
+        <button id="btn" class="btn">Skicka</button>
+      </div>
+
+      <div class="foot" id="footnote" style="display:none">
+        Botten använder Curevias källor för att svara korrekt.
+      </div>
+    </div>
+  </div>
+
+  <!-- Contact Modal -->
+  <div id="backdrop" class="modal-back" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="head">Lämna dina uppgifter</div>
+      <div class="body">
+        <div class="field">
+          <label for="name">Namn</label>
+          <input id="name" placeholder="För- och efternamn" />
+        </div>
+        <div class="field">
+          <label for="email">E-post</label>
+          <input id="email" placeholder="namn@exempel.se" />
+        </div>
+        <div class="field">
+          <label for="msg">Meddelande (valfritt)</label>
+          <textarea id="msg" rows="3" placeholder="Kort rad om vad du vill prata om"></textarea>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="cancel" class="btn" style="background:#e2e8f0;color:#0f172a">Avbryt</button>
+        <button id="send" class="btn">Skicka</button>
+      </div>
     </div>
   </div>
 
@@ -33,45 +110,117 @@ const log = document.getElementById("log");
 const chipsEl = document.getElementById("chips");
 const inp = document.getElementById("inp");
 const btn = document.getElementById("btn");
-const sessionId = self.crypto?.randomUUID?.() || "sess-" + Date.now();
+const footnote = document.getElementById("footnote");
+const sessionId = self.crypto?.randomUUID?.() || ("sess-" + Date.now());
 
-function addBubble(text, who="bot"){
+// Modal refs
+const backdrop = document.getElementById("backdrop");
+const fName = document.getElementById("name");
+const fEmail = document.getElementById("email");
+const fMsg = document.getElementById("msg");
+document.getElementById("cancel").onclick = ()=> toggleModal(false);
+document.getElementById("send").onclick = submitContact;
+
+function toggleModal(open){ backdrop.style.display = open ? "flex" : "none"; }
+
+function addBubble(text, who="bot", citations){
   const div = document.createElement("div");
   div.className = "bubble " + (who==="me"?"me":"bot");
   div.textContent = text;
+  if (citations && citations.length){
+    citations.forEach(c=>{
+      const a = document.createElement("a");
+      a.href = c.url; a.target="_blank"; a.rel="noreferrer"; a.className="cite link";
+      a.textContent = `[${c.id}] ${c.title}`;
+      div.appendChild(a);
+    });
+    footnote.style.display = "block";
+  }
   log.appendChild(div);
-  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+}
+
+/* --- SKRIVANIMERING: start/stop --- */
+function startTyping(){
+  const div = document.createElement("div");
+  div.className = "bubble bot";
+  const wrap = document.createElement("div");
+  wrap.className = "typing-wrap";
+  wrap.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+  div.appendChild(wrap);
+  log.appendChild(div);
+  log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+  return {
+    stop(){ div.remove(); }
+  };
 }
 
 async function meta(){
-  const r = await fetch(API, { headers: { "X-Session-Id": sessionId }});
-  const m = await r.json().catch(()=>({ suggested:[] }));
-  addBubble("Hej! 👋 Hur kan jag hjälpa till idag?");
-  (m.suggested||[]).forEach(c => {
-    const el = document.createElement("span");
-    el.className = "chip";
-    el.textContent = c.label;
-    el.onclick = () => send(c.label);
-    chipsEl.appendChild(el);
-  });
+  try{
+    const r = await fetch(API, { headers: { "X-Session-Id": sessionId }});
+    const m = await r.json();
+    addBubble("Hej! 👋 Jag är Curevia-boten – hur kan jag hjälpa till idag?");
+    (m.suggested||[]).forEach(c => {
+      const el = document.createElement("span");
+      el.className = "chip";
+      el.textContent = c.label;
+      el.onclick = () => send(c.label);
+      chipsEl.appendChild(el);
+    });
+  }catch{
+    addBubble("Jag nådde inte servern just nu – prova igen om en stund 🙏");
+  }
 }
 
 async function send(text){
-  if (!text.trim()) return;
+  if (!text?.trim()) return;
   addBubble(text, "me");
   inp.value = "";
-  const r = await fetch(API, {
-    method: "POST",
-    headers: { "Content-Type":"application/json", "X-Session-Id": sessionId },
-    body: JSON.stringify({ message: text })
-  });
-  const data = await r.json().catch(()=>({ reply:"Oj, något gick fel." }));
-  addBubble(data.reply || "Oj, något gick fel.");
-  if (data.action === "open_url" && data.url) {
-    window.open(data.url, "_blank", "noopener,noreferrer");
+
+  const typing = startTyping(); // visa “…” medan vi väntar
+
+  try{
+    const r = await fetch(API, {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "X-Session-Id": sessionId },
+      body: JSON.stringify({ message: text })
+    });
+    const data = await r.json();
+    typing.stop(); // ta bort “…” innan vi visar svaret
+
+    addBubble(data.reply || "Oj, något gick fel.", "bot", data.citations||[]);
+    if (data.action === "open_url" && data.url) {
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    }
+    if (data.action === "open_contact_form") {
+      toggleModal(true);
+    }
+  }catch{
+    typing.stop();
+    addBubble("Tekniskt fel – prova igen.", "bot");
   }
-  if (data.action === "open_contact_form") {
-    alert("Kontaktformulär skulle öppnas här."); // byt mot din modal
+}
+
+async function submitContact(){
+  const name = fName.value.trim();
+  const email = fEmail.value.trim();
+  const message = fMsg.value.trim();
+  if (!name || !email) { alert("Fyll i namn och e-post"); return; }
+  try{
+    const r = await fetch(API, {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "X-Session-Id": sessionId },
+      body: JSON.stringify({ contact: { name, email, message} })
+    });
+    if (r.ok){
+      toggleModal(false);
+      addBubble("Tack! Vi hör av oss inom kort 💙");
+      fName.value = ""; fEmail.value = ""; fMsg.value = "";
+    } else {
+      addBubble("Kunde inte skicka just nu – maila oss gärna så löser vi det.", "bot");
+    }
+  }catch{
+    addBubble("Kunde inte skicka just nu – prova igen senare.", "bot");
   }
 }
 
