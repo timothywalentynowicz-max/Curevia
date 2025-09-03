@@ -48,7 +48,7 @@
     .dot:nth-child(3){animation-delay:.4s}
     @keyframes blink{ 0%,100%{opacity:.25;transform:translateY(0)} 20%{opacity:1;transform:translateY(-2px)} }
 
-    /* Copy button */
+    /* Copy button (visas bara på långa bot-svar) */
     .copy{
       position:absolute; right:8px; top:8px;
       border:1px solid var(--chip-b); background:transparent; color:var(--muted);
@@ -122,56 +122,22 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  // ---------- Language detection (sv / no / en)
+  // ---- Language detection (sv / no / en)
   function detectLang(){
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
     const nlang = (navigator.languages && navigator.languages[0]) || navigator.language || "";
     const low = (nlang || "").toLowerCase();
-
     if (tz.includes("Stockholm") || low.startsWith("sv")) return "sv";
-    if (tz.includes("Oslo")      || low.startsWith("no") || low.startsWith("nb") || low.startsWith("nn")) return "no";
+    if (tz.includes("Oslo") || low.startsWith("no") || low.startsWith("nb") || low.startsWith("nn")) return "no";
     return "en";
   }
   const LANG = detectLang();
-
-  // Simple i18n map (UI only)
   const I18N = {
-    sv: {
-      title:"Curevia Assistant", subtitle:"Snabb hjälp • Demo när du vill",
-      placeholder:"Ställ en fråga…", send:"Skicka",
-      dark_on:"🌗 Mörkt läge", dark_off:"☀️ Ljust läge",
-      hello:"Hej! 👋 Jag är Curevia-boten – hur kan jag hjälpa till idag?",
-      foot:"Botten använder Curevias källor för att svara korrekt.",
-      modal_title:"Lämna dina uppgifter", name:"Namn", email:"E-post",
-      msg:"Meddelande (valfritt)", cancel:"Avbryt", submit:"Skicka",
-      error_server:"Jag nådde inte servern just nu – prova igen om en stund 🙏",
-      error_tech:"Tekniskt fel – prova igen.", copied:"Kopierat ✓", copy:"Kopiera", fail:"Fel"
-    },
-    no: {
-      title:"Curevia-assistenten", subtitle:"Rask hjelp • Demo når du vil",
-      placeholder:"Still et spørsmål…", send:"Send",
-      dark_on:"🌗 Mørk modus", dark_off:"☀️ Lys modus",
-      hello:"Hei! 👋 Jeg er Curevia-boten – hvordan kan jeg hjelpe deg i dag?",
-      foot:"Botten bruker Curevias kilder for å svare korrekt.",
-      modal_title:"Legg igjen kontaktinfo", name:"Navn", email:"E-post",
-      msg:"Melding (valgfritt)", cancel:"Avbryt", submit:"Send",
-      error_server:"Jeg fikk ikke kontakt med serveren – prøv igjen senere 🙏",
-      error_tech:"Teknisk feil – prøv igjen.", copied:"Kopiert ✓", copy:"Kopier", fail:"Feil"
-    },
-    en: {
-      title:"Curevia Assistant", subtitle:"Quick help • Demo anytime",
-      placeholder:"Ask a question…", send:"Send",
-      dark_on:"🌗 Dark mode", dark_off:"☀️ Light mode",
-      hello:"Hi! 👋 I’m the Curevia assistant — how can I help today?",
-      foot:"The assistant uses Curevia sources for accurate answers.",
-      modal_title:"Leave your details", name:"Name", email:"Email",
-      msg:"Message (optional)", cancel:"Cancel", submit:"Send",
-      error_server:"I couldn’t reach the server — please try again 🙏",
-      error_tech:"Technical error — please try again.", copied:"Copied ✓", copy:"Copy", fail:"Error"
-    }
+    sv:{title:"Curevia Assistant",subtitle:"Snabb hjälp • Demo när du vill",placeholder:"Ställ en fråga…",send:"Skicka",dark_on:"🌗 Mörkt läge",dark_off:"☀️ Ljust läge",hello:"Hej! 👋 Jag är Curevia-boten – hur kan jag hjälpa till idag?",foot:"Botten använder Curevias källor för att svara korrekt.",modal_title:"Lämna dina uppgifter",name:"Namn",email:"E-post",msg:"Meddelande (valfritt)",cancel:"Avbryt",submit:"Skicka",error_server:"Jag nådde inte servern just nu – prova igen om en stund 🙏",error_tech:"Tekniskt fel – prova igen.",copied:"Kopierat ✓",copy:"Kopiera",fail:"Fel"},
+    no:{title:"Curevia-assistenten",subtitle:"Rask hjelp • Demo når du vil",placeholder:"Still et spørsmål…",send:"Send",dark_on:"🌗 Mørk modus",dark_off:"☀️ Lys modus",hello:"Hei! 👋 Jeg er Curevia-boten – hvordan kan jeg hjelpe deg i dag?",foot:"Botten bruker Curevias kilder for å svare korrekt.",modal_title:"Legg igjen kontaktinfo",name:"Navn",email:"E-post",msg:"Melding (valgfritt)",cancel:"Avbryt",submit:"Send",error_server:"Jeg fikk ikke kontakt med serveren – prøv igjen senere 🙏",error_tech:"Teknisk feil – prøv igjen.",copied:"Kopiert ✓",copy:"Kopier",fail:"Feil"},
+    en:{title:"Curevia Assistant",subtitle:"Quick help • Demo anytime",placeholder:"Ask a question…",send:"Send",dark_on:"🌗 Dark mode",dark_off:"☀️ Light mode",hello:"Hi! 👋 I’m the Curevia assistant — how can I help today?",foot:"The assistant uses Curevia sources for accurate answers.",modal_title:"Leave your details",name:"Name",email:"Email",msg:"Message (optional)",cancel:"Cancel",submit:"Send",error_server:"I couldn’t reach the server — please try again 🙏",error_tech:"Technical error — please try again.",copied:"Copied ✓",copy:"Copy",fail:"Error"}
   }[LANG];
 
-  // Apply UI text
   document.documentElement.lang = LANG;
   const $ = (id)=>document.getElementById(id);
   $("ui-title").textContent = I18N.title;
@@ -184,7 +150,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("ui-email-label").textContent = I18N.email;
   $("ui-msg-label").textContent = I18N.msg;
 
-  // ---------- Theme init & toggle
+  // Theme
   const themeBtn = $("theme");
   const savedTheme = localStorage.getItem("cv_theme");
   if (savedTheme === "dark") document.documentElement.classList.add("dark");
@@ -196,32 +162,20 @@ document.addEventListener("DOMContentLoaded", () => {
     themeBtn.textContent = isDark ? I18N.dark_off : I18N.dark_on;
   });
 
-  // ---------- DOM refs
+  // DOM refs
   const API = "/api/curevia-chat";
-  const log = $("log");
-  const chipsEl = $("chips");
-  const inp = $("inp");
-  const btn = $("btn");
-  const footnote = $("footnote");
+  const log = $("log"), chipsEl = $("chips"), inp = $("inp"), btn = $("btn"), footnote = $("footnote");
   const sessionId = self.crypto?.randomUUID?.() || ("sess-" + Date.now());
 
-  // ---------- Modal refs
-  const backdrop = $("backdrop");
-  const fName = $("name");
-  const fEmail = $("email");
-  const fMsg = $("msg");
+  // Modal
+  const backdrop = $("backdrop"), fName=$("name"), fEmail=$("email"), fMsg=$("msg");
   $("cancel").onclick = ()=> toggleModal(false);
-  $("send").textContent = I18N.submit;
-  $("cancel").textContent = I18N.cancel;
-  $("send").onclick = submitContact;
+  $("send").textContent = I18N.submit; $("cancel").textContent = I18N.cancel; $("send").onclick = submitContact;
   function toggleModal(open){ backdrop.style.display = open ? "flex" : "none"; }
 
   function attachCopyButton(div){
     const cbtn = document.createElement("button");
-    cbtn.className = "copy";
-    cbtn.type = "button";
-    cbtn.textContent = I18N.copy;
-    cbtn.title = I18N.copy;
+    cbtn.className = "copy"; cbtn.type="button"; cbtn.textContent = I18N.copy; cbtn.title = I18N.copy;
     cbtn.onclick = async (e)=>{
       e.stopPropagation();
       try{
@@ -241,7 +195,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const div = document.createElement("div");
     div.className = "bubble " + (who==="me"?"me":"bot");
     div.textContent = text;
-    if (who !== "me") attachCopyButton(div);
+    // Visa “Kopiera” bara på långa bot-svar
+    if (who !== "me" && text && text.length >= 120) attachCopyButton(div);
     if (citations && citations.length){
       citations.forEach(c=>{
         const a = document.createElement("a");
@@ -263,7 +218,6 @@ document.addEventListener("DOMContentLoaded", () => {
     wrap.className = "typing-wrap";
     wrap.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
     div.appendChild(wrap);
-    attachCopyButton(div);
     log.appendChild(div);
     log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
     let timer = setTimeout(()=>{ div.remove(); }, 30000);
@@ -287,7 +241,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // ---------- Skicka (SSE + fallback) med språkheader
+  // Skicka (SSE + fallback)
   async function send(text){
     if (!text?.trim()) return;
     addBubble(text, "me");
@@ -352,9 +306,9 @@ document.addEventListener("DOMContentLoaded", () => {
           for (const line of lines) {
             if (line.startsWith("event:")) event = line.slice(6).trim();
             else if (line.startsWith("data:")) {
-              // Behåll mellanslag i token-data (tidigare trim förstörde spacing)
+              // behåll mellanslag i token-data
               let payload = line.slice(5);
-              if (payload.startsWith(" ")) payload = payload.slice(1); // ta bara bort ett enkelt mellanrum efter kolon
+              if (payload.startsWith(" ")) payload = payload.slice(1);
               data += payload;
             }
           }
@@ -362,7 +316,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
           if (event === "token") {
             if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
-            bubble.innerText += data;
+            bubble.innerText += data;   // innerText bevarar mellanrum/rader
             log.scrollTo({ top: log.scrollHeight });
           }
           else if (event === "action") {
@@ -427,11 +381,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Bindningar
+  // Bindningar + start
   $("btn").addEventListener("click", () => send($("inp").value));
   $("inp").addEventListener("keydown", (e) => { if (e.key === "Enter") send(e.target.value); });
-
-  // Start
   meta();
 });
 </script>
