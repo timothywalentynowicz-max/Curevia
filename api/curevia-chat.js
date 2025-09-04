@@ -1,4 +1,4 @@
-// api/curevia-chat.js — v3.1 (språkbyte + QA-översättning + fixad prislänk)
+// api/curevia-chat.js — v3.2 (multispråk + demo_any + no chips)
 
 // ==== ENV ==========================================================
 const OPENAI_API_KEY       = process.env.OPENAI_API_KEY;
@@ -17,11 +17,11 @@ const LINKS = {
   demo: "https://calendly.com/tim-curevia/30min",
   regConsult: "https://curevia.ai/consultant/register",
   regProvider: "https://curevia.ai/auth?type=signup&returnTo=/employer/register",
-  pricingProviders: "https://curevia.ai/vardgivare", // ✅ uppdaterad
+  pricingProviders: "https://curevia.ai/vardgivare", // ✅ rätt länk
 };
 
 const ACTIONS = { OPEN_URL: "open_url", OPEN_CONTACT_FORM: "open_contact_form" };
-const SCHEMA_VERSION = "3.1.0";
+const SCHEMA_VERSION = "3.2.0";
 
 // ==== Rate limit ===================================================
 const rl = new Map();
@@ -42,19 +42,14 @@ function normalize(str=""){
 function dePrompt(msg=""){ return msg.replace(/^(system:|du är|you are|ignore.*instructions|act as).{0,200}/i,"").trim(); }
 function hasSensitive(s=""){ return /\b(\d{6}|\d{8})[-+]?\d{4}\b/.test(s) || /journal|anamnes|diagnos|patient/i.test(s); }
 
-function sendJSON(res, payload){
-  res.setHeader("Content-Type","application/json; charset=utf-8");
-  res.status(200).send(JSON.stringify(payload));
-}
-
-// ==== SSE helpers ==================================================
 function wantsSSE(req){ if (/\bstream=1\b/.test(req.url || "")) return true; return String(req.headers.accept||"").includes("text/event-stream"); }
 function sseHeaders(res){ res.setHeader("Content-Type","text/event-stream; charset=utf-8"); res.setHeader("Cache-Control","no-cache, no-transform"); res.setHeader("Connection","keep-alive"); }
 function sseSend(res, event, data){ if(event) res.write(`event: ${event}\n`); res.write(`data: ${typeof data==="string" ? data : JSON.stringify(data)}\n\n`); }
+function sendJSON(res, payload){ res.setHeader("Content-Type","application/json; charset=utf-8"); res.status(200).send(JSON.stringify(payload)); }
 
 // ==== Redis session (optional) =====================================
 let redis = null;
-const sessMem = new Map(); // fallback in-memory
+const sessMem = new Map(); // fallback
 async function lazyRedis(){
   if (redis !== null) return redis;
   if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
@@ -66,10 +61,7 @@ async function lazyRedis(){
 async function getSess(sessionId){
   if (!sessionId) return {};
   const r = await lazyRedis();
-  if (r) {
-    try { const obj = await r.hgetall(`curevia:sess:${sessionId}`); if (obj) return obj; }
-    catch {}
-  }
+  if (r) { try { const obj = await r.hgetall(`curevia:sess:${sessionId}`); if (obj) return obj; } catch {} }
   return sessMem.get(sessionId) || {};
 }
 async function patchSess(sessionId, patch){
@@ -104,13 +96,11 @@ function detectLangFromText(t=""){
   return null;
 }
 function languageOf(message=""){
-  // fallback quick heuristic (sv/en/no)
   const t = message.toLowerCase();
-  const sv = /å|ä|ö|\b(vad|hur|kan|vill|demo|boka|vårdgiv|konsult|registrera|pris|avgift)\b/.test(t);
-  const no = /\b(hvordan|hva|kan|ø|æ|å|demo|booke|leverandør|konsulent|registrer|pris|avgift)\b/.test(t) || /norsk/.test(t);
-  const en = /\b(how|what|can|demo|book|provider|consultant|register|price|fee)\b/.test(t);
+  const no = /\b(hvordan|hva|demo|booke|leverandør|konsulent)\b/.test(t) || /[æøå]/.test(t);
+  const en = /\b(how|what|demo|book|provider|consultant|register|price|fee)\b/.test(t);
   if (no) return "no";
-  if (en && !sv) return "en";
+  if (en) return "en";
   return "sv";
 }
 const PROMPTS = {
@@ -123,6 +113,7 @@ const POLICY = `• Föreslå “Boka demo” bara när användaren ber om det.
 • Dela aldrig person- eller journaluppgifter; be om säker kanal i sådana fall.
 • Ton: varm, proffsig och lösningsorienterad. Max 2–3 meningar per svar.`;
 
+// snabb översättning för fasta texter när lang != sv
 async function translateIfNeeded(text, lang){
   if (!text || lang === "sv") return text;
   if (!OPENAI_API_KEY) return text;
@@ -173,7 +164,7 @@ async function getPromotedQAFromRedis(limit=10){
   }catch{ return []; }
 }
 
-// ==== Quick answers =================================================
+// ==== Quick answers (svenska som källa) =============================
 const DEFAULT_QA = [
   { pattern:/eget bolag|företag/i,
     reply:`Du behöver inte ha eget bolag – du kan få betalt via Curevia eller fakturera själv om du vill. Registrera konsultprofil: ${LINKS.regConsult}` },
@@ -181,7 +172,6 @@ const DEFAULT_QA = [
     reply:`Utbetalning via Curevia sker när vårdgivaren betalat. Har du eget bolag fakturerar du själv, vanligtvis med 30 dagars betalvillkor.` },
   { pattern:/inte betalar|försenad betal|betalningspåminn/i,
     reply:`Om en vårdgivare är sen driver Curevia ärendet till påminnelse, inkasso och vid behov Kronofogden – du ska känna dig trygg att få betalt.` },
-  // ✅ Ny pris-text
   { pattern:/kostnad|pris|avgift|prislista/i,
     reply:`Curevia är gratis för både vårdgivare och vårdpersonal att komma igång med. För vårdgivare finns olika paket beroende på hur mycket tjänsten används. Läs mer här: ${LINKS.pricingProviders}` },
   { pattern:/onboard|komma igång|starta|hur börjar/i,
@@ -212,16 +202,9 @@ async function loadQuickAnswers(force=false){
   }
   qaCache=list; return qaCache;
 }
-function qaChips(){
-  return [
-    { label:"Hur funkar betalning?" },
-    { label:"Vad kostar det?" },
-    { label:"Registrera konsult" },
-    { label:"Registrera vårdgivare" },
-  ];
-}
+function qaChips(){ return []; } // ✅ inga chips
 
-// ==== Net salary (same as before) ===================================
+// ==== Net salary ====================================================
 function calcNetFromInvoiceExVat(amountExVat, opts={}){
   const ag = Math.max(0, Number(opts.agAvg ?? 0.3142));
   const tax = Math.max(0, Math.min(0.6, Number(opts.taxRate ?? 0.30)));
@@ -265,16 +248,22 @@ function detectIntent(text=""){
   if (/(norsk|norska|på norsk|switch.*norwegian)/.test(t))     return "set_lang_no";
   if (/(svenska|på svenska)/.test(t))                           return "set_lang_sv";
 
-  const isProvider = /(vårdgivar|klinik|mottag|region|upphandl|integration|pris|avgift|pilot)/.test(t);
-  const isConsult  = /(konsult|uppdrag|ersättn|timlön|bemann|legitimation|profil|sjuksköters|läkar)/.test(t);
-  const wantsDemo  = /(demo|visa|boka|möte|genomgång|walkthrough)/.test(t);
-  const wantsReg   = /(registrera|skapa konto|signa|ansök|register)/.test(t);
-  const wantsContact = /(kontakta|ring upp|hör av er|hör av dig|contact)/.test(t);
+  // bredare signalord (sv + en + no)
+  const isProvider = /(vårdgivar|klinik|mottag|region|upphandl|integration|pris|avgift|pilot|provider|clinic|hospital|tender|integration)/.test(t);
+  const isConsult  = /(konsult|uppdrag|ersättn|timlön|bemann|legitimation|profil|sjuksköters|läkar|nurse|doctor|consultant|assignment|rate|per hour)/.test(t);
+
+  const wantsDemo  = /(demo|visa plattformen|genomgång|walkthrough|book.*demo|schedule.*demo|see (the )?platform)/.test(t);
+  const wantsReg   = /(registrera|skapa konto|signa|ansök|register|sign ?up|create account|apply)/.test(t);
+  const wantsContact = /(kontakta|ring upp|hör av er|hör av dig|contact|reach out|call me)/.test(t);
 
   if (wantsReg && isProvider) return "register_provider";
   if (wantsReg && isConsult)  return "register_consult";
+
+  // demo – trigga specifik intent om vi kan, annars generell demo_any
   if (wantsDemo && isProvider) return "provider_demo";
   if (wantsDemo && isConsult)  return "consult_demo";
+  if (wantsDemo)               return "demo_any";
+
   if (wantsContact) return "contact_me";
   if (isProvider) return "provider";
   if (isConsult)  return "consult";
@@ -301,7 +290,7 @@ function polishReply(text,intent="general",addCTA=false){
   return msg || `Vill du veta mer? Jag visar gärna 🌟 ${LINKS.demo}`;
 }
 
-// ==== RAG (unchanged from your file) =================================
+// ==== RAG ===========================================================
 let ragIndex=null;
 async function loadRagIndex(force=false){
   if (!RAG_INDEX_URL) return null;
@@ -351,7 +340,8 @@ export default async function handler(req,res){
     const qa = await loadQuickAnswers(); await loadRagIndex();
     return sendJSON(res, {
       ok:true, schema:SCHEMA_VERSION, route:"/api/curevia-chat",
-      qaCount: qa.length, suggested: qaChips(),
+      qaCount: qa.length,
+      suggested: [],                 // ✅ inga chips
       hasKey:Boolean(OPENAI_API_KEY), ragReady:Boolean(ragIndex),
       model:OPENAI_MODEL, streaming:true, contactWebhook:Boolean(CONTACT_WEBHOOK_URL)
     });
@@ -401,20 +391,18 @@ export default async function handler(req,res){
                                  : "Bytte till svenska 🇸🇪";
     return sendJSON(res,{ version:SCHEMA_VERSION, reply:confirm, action:null, url:null, citations:[], confidence:0.99 });
   }
-  // implicit request from text
   if (askedFor && askedFor!==lang){ lang=askedFor; if(sessionId) await patchSess(sessionId,{ lang }); }
-
   if (sessionId) await patchSess(sessionId,{ lang });
 
-  // ----- sensitive -----
+  // sensitive
   if (hasSensitive(message)){
     const msg = lang==="en" ? "I can’t process personal IDs or medical records here. Please use a secure channel 💙"
-              : lang==="no" ? "Jeg kan dessverre ikke motta person- eller journalopplysninger her. Ta kontakt via sikker kanal 💙"
+              : lang==="no" ? "Jeg kan dessverre ikke motta person- eller journalopplysninger here. Ta kontakt via sikker kanal 💙"
                             : "Jag kan tyvärr inte ta emot person- eller journaluppgifter här. Hör av dig via en säker kanal 💙";
     return sendJSON(res,{ version:SCHEMA_VERSION, reply:msg, action:null, url:null, citations:[], confidence:0.95 });
   }
 
-  // ----- net salary calc -----
+  // net salary
   const amountExVat = parseInvoiceAmount(message);
   if (amountExVat){
     const { text } = calcNetFromInvoiceExVat(amountExVat, assumptions||{});
@@ -422,7 +410,7 @@ export default async function handler(req,res){
     return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:null, url:null, citations:[], confidence:0.86 });
   }
 
-  // intents (CTAs)
+  // intents
   const intent = detectIntent(message);
   if (intent==="contact_me"){
     const reply = lang==="en" ? "Absolutely! Leave your details and we’ll get back to you shortly."
@@ -439,13 +427,21 @@ export default async function handler(req,res){
     return sendJSON(res,{ version:SCHEMA_VERSION, reply: await translateIfNeeded(base, lang), action:ACTIONS.OPEN_URL, url:LINKS.regConsult, citations:[], confidence:0.95 });
   }
   if (intent==="provider_demo" || intent==="consult_demo"){
-    const base = lang==="en" ? `Great — let’s book a short demo. ${LINKS.demo}`
-              : lang==="no" ? `Supert – la oss booke en kort demo. ${LINKS.demo}`
-                             : `Toppen – låt oss boka en kort demo. ${LINKS.demo}`;
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply:base, action:ACTIONS.OPEN_URL, url:LINKS.demo, citations:[], confidence:0.98 });
+    const lead = lang==='en' ? "Great — let’s book a short demo."
+               : lang==='no' ? "Supert – la oss booke en kort demo."
+                              : "Toppen – låt oss boka en kort demo.";
+    const reply = `${lead} ${LINKS.demo}`;
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:ACTIONS.OPEN_URL, url:LINKS.demo, citations:[], confidence:0.98 });
+  }
+  if (intent==="demo_any"){ // ✅ ny fallback för “book a demo” oavsett roll/språk
+    const lead = lang==='en' ? "Great — let’s book a short demo."
+               : lang==='no' ? "Supert – la oss booke en kort demo."
+                              : "Toppen – låt oss boka en kort demo.";
+    const reply = `${lead} ${LINKS.demo}`;
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:ACTIONS.OPEN_URL, url:LINKS.demo, citations:[], confidence:0.98 });
   }
 
-  // QA / chips
+  // QA
   const qa = await loadQuickAnswers();
   const hit = qa.find(q=>q.pattern.test(message));
   if (hit){
@@ -454,7 +450,7 @@ export default async function handler(req,res){
     return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:null, url:null, citations:[], confidence:0.9 });
   }
 
-  // ----- RAG retrieve -----
+  // RAG
   let ragPassages=[], citations=[];
   try{
     const r = await ragRetrieve(message,4);
@@ -464,7 +460,7 @@ export default async function handler(req,res){
 
   if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
 
-  // ----- Build prompt -----
+  // prompt
   const system = `${PROMPTS[lang] || PROMPTS.sv}\n${POLICY}\nMål för svaret: ${
     intent.startsWith("provider") ? "Hjälp vårdgivare vidare på ett vänligt sätt. CTA endast om det känns naturligt."
     : intent.startsWith("consult") ? "Hjälp konsulten vidare på ett vänligt sätt. CTA endast om det känns naturligt."
@@ -502,7 +498,7 @@ export default async function handler(req,res){
           if (!line) continue;
           if (line.startsWith("data: ")){
             const data = line.slice(6);
-            if (data==="[DONE]") continue;
+            if (data === "[DONE]") continue;
             try{
               const json = JSON.parse(data);
               const delta = json.choices?.[0]?.delta?.content || "";
