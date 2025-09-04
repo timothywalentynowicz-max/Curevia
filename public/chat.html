@@ -5,23 +5,33 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Curevia – Chat</title>
   <style>
-    :root{
-      --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a;
-      --border:#cbd5e1;
+    :root{ --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a; --border:#cbd5e1; }
+    *{ box-sizing:border-box }
+    body{ font-family:system-ui,Arial; background:var(--bg); color:var(--text); margin:0 }
+    .wrap{ max-width:420px; margin:12px auto; padding:12px }
+    h3{ margin:0 0 10px; display:flex; align-items:center; justify-content:space-between }
+    .toggle{ border:1px solid var(--border); background:#fff; color:#111827; border-radius:999px; padding:6px 10px; cursor:pointer }
+
+    #log{ max-height:70vh; overflow:auto; padding-bottom:8px }
+    .bubble{ padding:10px 12px; border-radius:16px; margin:8px 0; max-width:90%; white-space:pre-wrap; line-height:1.35 }
+    .bot{ background:var(--bot); border-top-left-radius:6px }
+    .me{ background:var(--me); color:#fff; margin-left:auto; border-top-right-radius:6px }
+    .copy{ font-size:12px; color:#64748b; margin-top:4px; cursor:pointer }
+
+    .row{ display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:8px 0; border-top:1px solid var(--border) }
+    input{ flex:1; padding:12px; border:1px solid var(--border); border-radius:12px }
+    button{ padding:12px 16px; border:0; border-radius:12px; background:#111827; color:#fff; cursor:pointer }
+
+    /* Mörkt läge */
+    body.dark{ --bg:#0f172a; --bot:#1e293b; --text:#f8fafc; --border:#334155 }
+    body.dark .toggle{ background:#0b1220; color:#f8fafc; border-color:#334155 }
+
+    /* Mobil */
+    @media (max-width:520px){
+      .wrap{ margin:8px auto; padding:8px }
+      #log{ max-height:68vh }
+      .bubble{ max-width:100% }
     }
-    body{font-family:system-ui,Arial;background:var(--bg);color:var(--text);margin:0}
-    .wrap{max-width:720px;margin:0 auto;padding:24px}
-    h3{margin:0 0 12px;display:flex;align-items:center;justify-content:space-between}
-    .bubble{padding:12px 14px;border-radius:16px;margin:8px 0;max-width:80%;white-space:pre-wrap}
-    .bot{background:var(--bot);border-top-left-radius:6px}
-    .me{background:var(--me);color:#fff;margin-left:auto;border-top-right-radius:6px}
-    .row{display:flex;gap:8px;position:sticky;bottom:0;background:var(--bg);padding:8px 0}
-    input{flex:1;padding:12px;border:1px solid var(--border);border-radius:12px}
-    button{padding:12px 16px;border:0;border-radius:12px;background:#111827;color:#fff;cursor:pointer}
-    .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-    .chip{background:#e2e8f0;border-radius:999px;padding:6px 10px;font-size:14px;cursor:pointer}
-    .copy{font-size:12px;color:#64748b;margin-top:4px;cursor:pointer}
-    .toggle{border:1px solid var(--border);background:#fff;color:#111827;border-radius:999px;padding:6px 10px}
   </style>
 </head>
 <body>
@@ -32,7 +42,6 @@
     </h3>
 
     <div id="log"></div>
-    <div id="chips" class="chips"></div>
 
     <div class="row">
       <input id="inp" placeholder="Skriv ett meddelande..." />
@@ -42,12 +51,11 @@
 
 <script>
 /* ===== Config ===== */
-const API = "/api/curevia-chat";  // <— rätt, utan .js
+const API = "/api/curevia-chat";
 const sessionId = self.crypto?.randomUUID?.() || ("sess-" + Date.now());
 
 /* ===== DOM ===== */
 const log   = document.getElementById("log");
-const chips = document.getElementById("chips");
 const inp   = document.getElementById("inp");
 const btn   = document.getElementById("btn");
 const dark  = document.getElementById("dark");
@@ -68,11 +76,9 @@ function addBubble(text, who="bot"){
   log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
   return div;
 }
-
-function typingBubble() {
-  const b = addBubble("…", "bot");
-  return { destroy(){ try{ b.remove(); }catch{} } };
-}
+function typingBubble(){ const b = addBubble("…","bot"); return { destroy(){ try{ b.remove(); }catch{} } }; }
+function openNewTab(url){ try { window.open(url, "_blank", "noopener,noreferrer"); } catch {} }
+function firstUrlIn(text){ const m = String(text||"").match(/https?:\/\/[^\s)]+/i); return m ? m[0] : null; }
 
 /* ===== Dark mode ===== */
 dark.onclick = () => document.body.classList.toggle("dark");
@@ -82,34 +88,30 @@ boot();
 async function boot(){
   try{
     const r = await fetch(API, { headers: { "X-Session-Id": sessionId }});
-    const ct = (r.headers.get("content-type")||"").toLowerCase();
-    if (!ct.includes("application/json")) throw new Error("meta not json");
-    const m = await r.json();
+    const ok = (r.headers.get("content-type")||"").toLowerCase().includes("application/json");
+    if (!ok) throw new Error("meta");
+    await r.json();
     addBubble("Hej! 👋 Hur kan jag hjälpa till idag?");
-    (m.suggested || []).forEach(x=>{
-      const chip = document.createElement("span");
-      chip.className = "chip";
-      chip.textContent = x.label;
-      chip.onclick = ()=> send(x.label);
-      chips.appendChild(chip);
-    });
   }catch{
     addBubble("Jag nådde inte servern just nu – prova igen om en stund 🙏");
   }
 }
 
 /* ===== Send ===== */
+let lastUserText = "";
 btn.onclick = ()=> send(inp.value);
 inp.addEventListener("keydown", e => { if (e.key==="Enter") send(inp.value); });
 
 async function send(text){
   if (!text || !text.trim()) return;
+  lastUserText = text;
   addBubble(text, "me");
   inp.value = "";
 
-  const bubble = addBubble("", "bot");          // där svaret hamnar
-  const typing = typingBubble();                // liten “…”-indikator
+  const bubble = addBubble("", "bot");
+  const typing = typingBubble();
   let gotAnyToken = false;
+  let finalText = "";
 
   try {
     const r = await fetch(API + "?stream=1", {
@@ -117,6 +119,7 @@ async function send(text){
       headers: {
         "Content-Type":"application/json",
         "X-Session-Id": sessionId,
+        "X-Lang": navigator.language || "",
         "Accept":"text/event-stream"
       },
       body: JSON.stringify({ message: text })
@@ -124,22 +127,26 @@ async function send(text){
 
     const ct = (r.headers.get("content-type") || "").toLowerCase();
 
-    // Skydd: om vi råkar få HTML/JS/text, visa fel (inte källkod i bubblan)
+    // Om vi inte får SSE: hantera JSON och öppna ev. länk
     if (!ct.includes("text/event-stream")) {
       const safe = ct.includes("application/json");
+      typing.destroy();
       if (safe) {
         const data = await r.json();
-        typing.destroy();
         bubble.innerText = data.reply || "Tekniskt fel – prova igen.";
+        if (data.action === "open_url" && data.url) {
+          openNewTab(data.url);                       // öppna via action
+        } else {
+          const url = firstUrlIn(data.reply);
+          if (url && /demo|book|boka/i.test(lastUserText)) openNewTab(url); // fallback
+        }
       } else {
-        typing.destroy();
         bubble.innerText = "Tekniskt fel – prova igen.";
       }
       return;
     }
 
-    // === Robust SSE-parser: funkar med BÅDE din backend (event: token/final)
-    // === OCH OpenAI-råstream (data: {...delta.content...})
+    // === Robust SSE-parser: token/final/action + OpenAI-fallback
     const reader = r.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
@@ -149,7 +156,6 @@ async function send(text){
       if (done) break;
       buffer += decoder.decode(value, { stream:true });
 
-      // Processa hela SSE-eventblock (separerade med tom rad)
       let idx;
       while ((idx = buffer.indexOf("\n\n")) >= 0) {
         const raw = buffer.slice(0, idx);
@@ -164,49 +170,58 @@ async function send(text){
           if (line.startsWith("event:")) event = line.slice(6).trim();
           else if (line.startsWith("data:")) {
             let payload = line.slice(5);
-            if (payload.startsWith(" ")) payload = payload.slice(1); // ta bort bara ett space efter kolon
+            if (payload.startsWith(" ")) payload = payload.slice(1);
             data += payload;
           }
         }
         if (!data) continue;
 
-        // 1) Din backend: event: token → data = sträng
+        // Direkt action från backend (öppna URL i ny flik)
+        if (event === "action") {
+          try {
+            const a = JSON.parse(data);
+            if (a?.action === "open_url" && a.url) openNewTab(a.url);
+          } catch {}
+          continue;
+        }
+
         if (event === "token") {
           if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
-          bubble.innerText += data;                 // bevara mellanslag/rader
+          bubble.innerText += data; finalText += data;
           log.scrollTo({ top: log.scrollHeight });
           continue;
         }
 
-        // 2) Din backend: event: final → data kan vara sträng eller {"reply": "..."}
         if (event === "final") {
           typing.destroy();
           try {
             const j = JSON.parse(data);
-            if (!gotAnyToken && j.reply) bubble.innerText = j.reply;
-            // (ev. citations mm kan hanteras här om du börjar skicka dem)
+            if (!gotAnyToken && j.reply) { bubble.innerText = j.reply; finalText = j.reply; }
           } catch {
-            if (!gotAnyToken) bubble.innerText = data;
+            if (!gotAnyToken) { bubble.innerText = data; finalText = data; }
           }
           continue;
         }
 
-        // 3) OpenAI råstream (inga event-fält, bara data: {choices[0].delta.content})
-        //    eller event: message med samma data
+        // OpenAI råstream fallback
         try{
           const j = JSON.parse(data);
           const delta = j?.choices?.[0]?.delta?.content;
           if (delta){
             if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
-            bubble.innerText += delta;
+            bubble.innerText += delta; finalText += delta;
           }
-        }catch{/* om inte JSON, ignorerar vi */}
+        }catch{}
       }
     }
 
-    if (!gotAnyToken) { typing.destroy(); if (!bubble.innerText) bubble.innerText = "Inget svar – prova igen."; }
+    if (!gotAnyToken && !bubble.innerText) { typing.destroy(); bubble.innerText = "Inget svar – prova igen."; }
 
-    // Lägg copy efteråt om svaret är längre
+    // Fallback: om frågan gällde demo och svaret har länk, öppna den
+    const maybeUrl = firstUrlIn(finalText);
+    if (maybeUrl && /demo|book|boka/i.test(lastUserText)) openNewTab(maybeUrl);
+
+    // Kopiera-knapp för långa svar
     if (bubble.innerText.length > 120){
       const cp = document.createElement("div");
       cp.className = "copy";
