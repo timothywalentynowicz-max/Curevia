@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light dark" />
   <title>Curevia – Chat</title>
   <style>
-    :root{ --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a; --border:#cbd5e1; --focus:#94a3b8; }
+    :root{ --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a; --border:#cbd5e1; --focus:#94a3b8; --toast:#111827; --toastText:#fff; }
     *{ box-sizing:border-box }
     body{ font-family:system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--text); margin:0 }
     .wrap{ max-width:520px; margin:12px auto; padding:12px }
@@ -53,8 +53,18 @@
     .btn-primary{ background:#111827; color:#fff }
     .btn-ghost{ background:#fff; border:1px solid #cbd5e1 }
 
+    /* Toast */
+    .toast{
+      position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+      background:var(--toast); color:var(--toastText);
+      padding:10px 14px; border-radius:10px; box-shadow:0 6px 20px rgba(0,0,0,.18);
+      opacity:0; pointer-events:none; transition:opacity .2s ease, transform .2s ease;
+      z-index:60; font-size:14px; max-width:90vw; text-align:center;
+    }
+    .toast.show{ opacity:1; transform:translateX(-50%) translateY(-4px) }
+
     /* Dark */
-    body.dark{ --bg:#0f172a; --bot:#1e293b; --text:#f8fafc; --border:#334155 }
+    body.dark{ --bg:#0f172a; --bot:#1e293b; --text:#f8fafc; --border:#334155; --toast:#0b1220; --toastText:#f8fafc; }
     body.dark .toggle{ background:#0b1220; color:#f8fafc; border-color:#334155 }
     body.dark .modal{ background:#0b1220; color:#f8fafc }
     body.dark .modal input, body.dark .modal textarea{ background:#0b1220; color:#f8fafc; border-color:#334155 }
@@ -99,6 +109,9 @@
     </div>
   </div>
 
+  <!-- Toast -->
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
 <script>
 /* ===== Config ===== */
 const API = "/api/curevia-chat";
@@ -109,6 +122,7 @@ const log   = document.getElementById("log");
 const inp   = document.getElementById("inp");
 const btn   = document.getElementById("btn");
 const dark  = document.getElementById("dark");
+const toastEl = document.getElementById("toast");
 
 const modalBg = document.getElementById("modalBg");
 const cName   = document.getElementById("cName");
@@ -117,6 +131,16 @@ const cPhone  = document.getElementById("cPhone");
 const cMsg    = document.getElementById("cMsg");
 const cCancel = document.getElementById("cCancel");
 const cSend   = document.getElementById("cSend");
+
+/* ===== Toast helper ===== */
+let toastTimer=null;
+function showToast(msg="Klart!", ms=2200){
+  if (!toastEl) return;
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> toastEl.classList.remove("show"), ms);
+}
 
 /* ===== UI helpers ===== */
 function addBubble(text, who="bot"){
@@ -137,7 +161,12 @@ function addCopyIfLong(div){
   div.appendChild(cp);
 }
 function typingBubble(){ const b = addBubble("…","bot"); return { destroy(){ try{ b.remove(); }catch{} } }; }
-function openNewTab(url){ try { window.open(url, "_blank", "noopener,noreferrer"); } catch {} }
+function openNewTab(url, toastMsg){
+  try {
+    window.open(url, "_blank", "noopener,noreferrer");
+    if (toastMsg) showToast(toastMsg);
+  } catch {}
+}
 function firstUrlIn(text){ const m = String(text||"").match(/https?:\/\/[^\s)]+/i); return m ? m[0] : null; }
 
 /* Suggestions / Chips */
@@ -150,7 +179,7 @@ function createChip(it){
   b.setAttribute("aria-label", (it.text || it.label || "").trim());
   b.innerHTML = `<span class="emoji">${it.emoji || ""}</span><span class="label">${it.text || it.label || ""}</span>`;
   b.onclick = () => {
-    if (it.url){ openNewTab(it.url); return; }
+    if (it.url){ openNewTab(it.url, it.toast || "Öppnade länk i ny flik"); return; }
     const sendText = it.textSend || it.text || it.label;
     if (sendText){ send(sendText); }
   };
@@ -195,7 +224,8 @@ async function boot(){
       { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
       { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
       { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
-      { emoji:"✍️", text:"Registrera dig",    textSend:"Jag vill registrera mig" }
+      { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
+      { emoji:"🧷", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
     ]);
   }catch{
     addBubble("Jag nådde inte servern just nu – prova igen om en stund 🙏");
@@ -205,9 +235,7 @@ async function boot(){
 /* ===== Send ===== */
 let lastUserText = "";
 btn.onclick = ()=> send(inp.value);
-inp.addEventListener("input", () => {
-  btn.disabled = !inp.value.trim();
-});
+inp.addEventListener("input", () => { btn.disabled = !inp.value.trim(); });
 inp.addEventListener("keydown", e => {
   if (e.key === "Enter"){
     e.preventDefault();
@@ -222,6 +250,9 @@ async function send(text){
   addBubble(text, "me");
   inp.value = "";
   btn.disabled = true;
+
+  // Snabb hantering av registreringsintention
+  if (handleRegistrationIntent(text)) return;
 
   const bubble = addBubble("", "bot");
   const typing = typingBubble();
@@ -249,7 +280,7 @@ async function send(text){
       if (safe) {
         const data = await r.json();
         bubble.innerText = data.reply || "Tekniskt fel – prova igen.";
-        if (data.action === "open_url" && data.url) openNewTab(data.url);
+        if (data.action === "open_url" && data.url) openNewTab(data.url, "Öppnade länk i ny flik");
         if (Array.isArray(data.suggestions)) finalSuggestions = data.suggestions;
       } else {
         bubble.innerText = "Tekniskt fel – prova igen.";
@@ -293,7 +324,7 @@ async function send(text){
         if (event === "action") {
           try {
             const a = JSON.parse(data);
-            if (a?.action === "open_url" && a.url) openNewTab(a.url);
+            if (a?.action === "open_url" && a.url) openNewTab(a.url, "Öppnade länk i ny flik");
             if (a?.action === "open_contact_form") openContactForm();
           } catch {}
           continue;
@@ -334,7 +365,7 @@ async function send(text){
     if (!gotAnyToken && !bubble.innerText) { typing.destroy(); bubble.innerText = "Inget svar – prova igen."; }
 
     const maybeUrl = firstUrlIn(finalText);
-    if (maybeUrl && /demo|book|boka/i.test(lastUserText)) openNewTab(maybeUrl);
+    if (maybeUrl && /demo|book|boka/i.test(lastUserText)) openNewTab(maybeUrl, "Öppnade bokningslänk i ny flik");
 
     addCopyIfLong(bubble);
     if (finalSuggestions?.length) renderChips(finalSuggestions);
@@ -342,7 +373,7 @@ async function send(text){
 
   } catch(e) {
     typing.destroy();
-    bubble.innerText = "Tekniskt fel – prova igen.";
+    addBubble("Tekniskt fel – prova igen.");
   }
 }
 
@@ -352,6 +383,39 @@ const LINKS = {
   regConsult:"https://curevia.ai/consultant/register",
   regProvider:"https://curevia.ai/auth?type=signup&returnTo=/employer/register"
 };
+
+function registrationMessage(){
+  return "För att registrera dig, vänligen besök vår webbplats och följ registreringsanvisningarna. Om du behöver hjälp kan du alltid kontakta oss!";
+}
+
+function handleRegistrationIntent(userText=""){
+  const t = (userText||"").toLowerCase();
+
+  const isConsult = /(registrera|sign ?up|konto).*?(konsult|sjuksköters|läkar|nurse|doctor)/.test(t);
+  const isProvider = /(registrera|sign ?up|konto).*?(vårdgivar|klinik|mottag|provider|clinic|hospital)/.test(t);
+  const genericReg = /(registrera|sign ?up|skapa konto)/.test(t);
+
+  if (isConsult){
+    openNewTab(LINKS.regConsult, "Öppnade registreringen för vårdpersonal");
+    addBubble(registrationMessage(), "bot");
+    return true;
+  }
+  if (isProvider){
+    openNewTab(LINKS.regProvider, "Öppnade registreringen för vårdgivare");
+    addBubble(registrationMessage(), "bot");
+    return true;
+  }
+  if (genericReg){
+    renderChips([
+      { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
+      { emoji:"🏥", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
+    ]);
+    addBubble(registrationMessage(), "bot");
+    return true;
+  }
+  return false;
+}
+
 function smartSuggest(userText="", botText=""){
   const t = (userText||"").toLowerCase();
   const isProv = /(vårdgivar|klinik|mottag|provider|clinic|hospital)/.test(t);
@@ -360,18 +424,20 @@ function smartSuggest(userText="", botText=""){
   if (isProv) return renderChips([
     { emoji:"👀", text:"Se hur det funkar", textSend:"Hur funkar Curevia för vårdgivare?" },
     { emoji:"📄", text:"Pris & paket",      textSend:"Vad kostar det?" },
-    { emoji:"📅", text:"Boka demo",         url:LINKS.demo }
+    { emoji:"📅", text:"Boka demo",         url:LINKS.demo, toast:"Öppnade demo-bokning i ny flik" },
+    { emoji:"🏥", text:"Registrera – Vårdgivare", url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
   ]);
   if (isCons) return renderChips([
-    { emoji:"🚀", text:"Registrera dig",    url:LINKS.regConsult },
     { emoji:"💬", text:"Vanliga frågor",    textSend:"Vanliga frågor för konsulter" },
-    { emoji:"📅", text:"Boka demo",         url:LINKS.demo }
+    { emoji:"📅", text:"Boka demo",         url:LINKS.demo, toast:"Öppnade demo-bokning i ny flik" },
+    { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" }
   ]);
   return renderChips([
     { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
     { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
     { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
-    { emoji:"✍️", text:"Registrera dig",    textSend:"Jag vill registrera mig" }
+    { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
+    { emoji:"🧷", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
   ]);
 }
 
