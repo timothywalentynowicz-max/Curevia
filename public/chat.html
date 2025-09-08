@@ -3,14 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
   <title>Curevia – Chat</title>
   <style>
-    :root{ --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a; --border:#cbd5e1; }
+    :root{ --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a; --border:#cbd5e1; --focus:#94a3b8; }
     *{ box-sizing:border-box }
-    body{ font-family:system-ui,Arial; background:var(--bg); color:var(--text); margin:0 }
-    .wrap{ max-width:420px; margin:12px auto; padding:12px }
-    h3{ margin:0 0 10px; display:flex; align-items:center; justify-content:space-between }
-    .toggle{ border:1px solid var(--border); background:#fff; color:#111827; border-radius:999px; padding:6px 10px; cursor:pointer }
+    body{ font-family:system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--text); margin:0 }
+    .wrap{ max-width:520px; margin:12px auto; padding:12px }
+    h3{ margin:0 0 10px; display:flex; align-items:center; justify-content:space-between; gap:8px }
+    .toggle{ border:1px solid var(--border); background:#fff; color:#111827; border-radius:999px; padding:6px 12px; cursor:pointer }
+    .toggle:focus-visible{ outline:3px solid var(--focus); outline-offset:2px }
 
     #log{ max-height:70vh; overflow:auto; padding-bottom:8px }
     .bubble{ padding:10px 12px; border-radius:16px; margin:8px 0; max-width:90%; white-space:pre-wrap; line-height:1.35; position:relative }
@@ -19,12 +21,25 @@
     .copy{ font-size:12px; color:#64748b; margin-top:6px; cursor:pointer; user-select:none }
 
     .row{ display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:8px 0; border-top:1px solid var(--border) }
-    input{ flex:1; padding:12px; border:1px solid var(--border); border-radius:12px }
-    button{ padding:12px 16px; border:0; border-radius:12px; background:#111827; color:#fff; cursor:pointer }
+    input[type="text"]{ flex:1; padding:12px; border:1px solid var(--border); border-radius:12px }
+    button.primary{ padding:12px 16px; border:0; border-radius:12px; background:#111827; color:#fff; cursor:pointer }
+    button.primary:disabled{ opacity:.6; cursor:not-allowed }
+    button.primary:focus-visible{ outline:3px solid var(--focus); outline-offset:2px }
 
     /* Suggestions / Chips */
     .chips{ display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 2px }
-    .chip{ background:#fff; border:1px solid var(--border); border-radius:999px; padding:6px 10px; font-size:14px; cursor:pointer }
+    .chip{
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:#fff; border:1px solid var(--border);
+      border-radius:999px; padding:.6rem .9rem;
+      font-size:14px; font-weight:600; cursor:pointer;
+      box-shadow:0 1px 2px rgba(0,0,0,.04);
+      transition:transform .02s ease-in, box-shadow .12s ease;
+    }
+    .chip .emoji{ font-size:1.1rem; line-height:1 }
+    .chip .label{ line-height:1; white-space:nowrap }
+    .chip:hover{ transform:translateY(-1px); box-shadow:0 2px 6px rgba(0,0,0,.06) }
+    .chip:focus-visible{ outline:3px solid var(--focus); outline-offset:2px }
     body.dark .chip{ background:#0b1220; color:#f8fafc; border-color:#334155 }
 
     /* Modal (contact form) */
@@ -56,21 +71,21 @@
   <div class="wrap">
     <h3>
       <span>Curevia Assistant</span>
-      <button id="dark" class="toggle" type="button">Mörkt läge</button>
+      <button id="dark" class="toggle" type="button" aria-pressed="false" aria-label="Växla mörkt läge">Mörkt läge</button>
     </h3>
 
-    <div id="log"></div>
+    <div id="log" aria-live="polite" aria-atomic="false"></div>
 
     <div class="row">
-      <input id="inp" placeholder="Skriv ett meddelande..." />
-      <button id="btn" type="button">Skicka</button>
+      <input id="inp" type="text" placeholder="Skriv ett meddelande..." autocomplete="off" />
+      <button id="btn" class="primary" type="button" disabled>Skicka</button>
     </div>
   </div>
 
   <!-- Contact modal -->
-  <div id="modalBg" class="modal-bg">
+  <div id="modalBg" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="contactTitle">
     <div class="modal">
-      <h4>Lämna dina uppgifter</h4>
+      <h4 id="contactTitle">Lämna dina uppgifter</h4>
       <div class="g">
         <input id="cName"  placeholder="Namn" />
         <input id="cEmail" placeholder="E-post" />
@@ -128,22 +143,25 @@ function firstUrlIn(text){ const m = String(text||"").match(/https?:\/\/[^\s)]+/
 /* Suggestions / Chips */
 let chipsBar = null;
 function clearChips(){ if(chipsBar){ try{ chipsBar.remove(); }catch{} chipsBar=null; } }
+function createChip(it){
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.type = "button";
+  b.setAttribute("aria-label", (it.text || it.label || "").trim());
+  b.innerHTML = `<span class="emoji">${it.emoji || ""}</span><span class="label">${it.text || it.label || ""}</span>`;
+  b.onclick = () => {
+    if (it.url){ openNewTab(it.url); return; }
+    const sendText = it.textSend || it.text || it.label;
+    if (sendText){ send(sendText); }
+  };
+  return b;
+}
 function renderChips(items=[]){
   clearChips();
   if (!items || !items.length) return;
   chipsBar = document.createElement("div");
   chipsBar.className = "chips";
-  for (const it of items){
-    const b = document.createElement("button");
-    b.className = "chip";
-    b.type = "button";
-    b.textContent = it.label;
-    b.onclick = () => {
-      if (it.url){ openNewTab(it.url); return; }
-      if (it.text){ send(it.text); return; }
-    };
-    chipsBar.appendChild(b);
-  }
+  for (const it of items){ chipsBar.appendChild(createChip(it)); }
   // lägg chips under sista bot-bubblan
   const last = [...log.querySelectorAll(".bubble.bot")].pop();
   if (last){ last.appendChild(chipsBar); }
@@ -151,7 +169,18 @@ function renderChips(items=[]){
 }
 
 /* ===== Dark mode ===== */
-dark.onclick = () => document.body.classList.toggle("dark");
+(function initTheme(){
+  const saved = localStorage.getItem("curevia_dark");
+  if (saved === "1" || (!saved && window.matchMedia?.("(prefers-color-scheme: dark)").matches)){
+    document.body.classList.add("dark");
+    dark.setAttribute("aria-pressed","true");
+  }
+})();
+dark.onclick = () => {
+  const on = document.body.classList.toggle("dark");
+  dark.setAttribute("aria-pressed", on ? "true" : "false");
+  localStorage.setItem("curevia_dark", on ? "1" : "0");
+};
 
 /* ===== Boot ===== */
 boot();
@@ -163,10 +192,10 @@ async function boot(){
     const meta = await r.json();
     addBubble("Hej! 👋 Välkommen till Curevia. Vad vill du göra?");
     renderChips(meta.suggested || [
-      { label:"ℹ️ Om Curevia",       text:"Berätta mer om Curevia" },
-      { label:"🏥 För vårdgivare",   text:"Vad erbjuder ni för vårdgivare?" },
-      { label:"👩‍⚕️ För vårdpersonal", text:"Vad erbjuder ni för vårdpersonal?" },
-      { label:"✍️ Registrera dig",   text:"Jag vill registrera mig" }
+      { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
+      { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
+      { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
+      { emoji:"✍️", text:"Registrera dig",    textSend:"Jag vill registrera mig" }
     ]);
   }catch{
     addBubble("Jag nådde inte servern just nu – prova igen om en stund 🙏");
@@ -176,7 +205,15 @@ async function boot(){
 /* ===== Send ===== */
 let lastUserText = "";
 btn.onclick = ()=> send(inp.value);
-inp.addEventListener("keydown", e => { if (e.key==="Enter") send(inp.value); });
+inp.addEventListener("input", () => {
+  btn.disabled = !inp.value.trim();
+});
+inp.addEventListener("keydown", e => {
+  if (e.key === "Enter"){
+    e.preventDefault();
+    if (inp.value.trim()) send(inp.value);
+  }
+});
 
 async function send(text){
   if (!text || !text.trim()) return;
@@ -184,6 +221,7 @@ async function send(text){
   lastUserText = text;
   addBubble(text, "me");
   inp.value = "";
+  btn.disabled = true;
 
   const bubble = addBubble("", "bot");
   const typing = typingBubble();
@@ -320,20 +358,20 @@ function smartSuggest(userText="", botText=""){
   const isCons = /(konsult|sjuksköters|läkar|nurse|doctor)/.test(t);
 
   if (isProv) return renderChips([
-    { label:"👀 Se hur det funkar", text:"Hur funkar Curevia för vårdgivare?" },
-    { label:"📄 Pris & paket",      text:"Vad kostar det?" },
-    { label:"📅 Boka demo",         url:LINKS.demo }
+    { emoji:"👀", text:"Se hur det funkar", textSend:"Hur funkar Curevia för vårdgivare?" },
+    { emoji:"📄", text:"Pris & paket",      textSend:"Vad kostar det?" },
+    { emoji:"📅", text:"Boka demo",         url:LINKS.demo }
   ]);
   if (isCons) return renderChips([
-    { label:"🚀 Registrera dig",    url:LINKS.regConsult },
-    { label:"💬 Vanliga frågor",    text:"Vanliga frågor för konsulter" },
-    { label:"📅 Boka demo",         url:LINKS.demo }
+    { emoji:"🚀", text:"Registrera dig",    url:LINKS.regConsult },
+    { emoji:"💬", text:"Vanliga frågor",    textSend:"Vanliga frågor för konsulter" },
+    { emoji:"📅", text:"Boka demo",         url:LINKS.demo }
   ]);
   return renderChips([
-    { label:"ℹ️ Om Curevia",       text:"Berätta mer om Curevia" },
-    { label:"🏥 För vårdgivare",   text:"Vad erbjuder ni för vårdgivare?" },
-    { label:"👩‍⚕️ För vårdpersonal", text:"Vad erbjuder ni för vårdpersonal?" },
-    { label:"✍️ Registrera dig",   text:"Jag vill registrera mig" }
+    { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
+    { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
+    { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
+    { emoji:"✍️", text:"Registrera dig",    textSend:"Jag vill registrera mig" }
   ]);
 }
 
