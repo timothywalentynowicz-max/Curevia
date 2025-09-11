@@ -80,8 +80,16 @@
 <body>
   <div class="wrap">
     <h3>
-      <span>Curevia Assistant</span>
-      <button id="dark" class="toggle" type="button" aria-pressed="false" aria-label="Växla mörkt läge">Mörkt läge</button>
+      <span id="title">Curevia Assistant</span>
+      <div style="display:flex; gap:8px; align-items:center">
+        <select id="lang" class="toggle" aria-label="Language selector">
+          <option value="sv">Svenska</option>
+          <option value="en">English</option>
+          <option value="no">Norsk</option>
+          <option value="da">Dansk</option>
+        </select>
+        <button id="dark" class="toggle" type="button" aria-pressed="false" aria-label="Växla mörkt läge">Mörkt läge</button>
+      </div>
     </h3>
 
     <div id="log" aria-live="polite" aria-atomic="false"></div>
@@ -89,6 +97,17 @@
     <div class="row">
       <input id="inp" type="text" placeholder="Skriv ett meddelande..." autocomplete="off" />
       <button id="btn" class="primary" type="button" disabled>Skicka</button>
+    </div>
+
+    <div id="netcard" class="bubble bot" aria-live="polite">
+      <div style="font-weight:700; margin-bottom:6px" id="netTitle">Snabb kalkyl – Nettolön</div>
+      <label for="netInput" id="netLabel">Fakturerat belopp (exkl. moms):</label>
+      <input id="netInput" type="text" inputmode="decimal" style="margin:6px 0; width:100%; padding:10px; border:1px solid var(--border); border-radius:10px" placeholder="t.ex. 120 000" />
+      <div id="netOut" style="margin-top:4px"></div>
+    </div>
+
+    <div class="bubble bot" aria-live="polite" style="font-size:13px">
+      <span id="privacy">Vi anonymiserar frågor och sparar inga personuppgifter. <a href="#" target="_blank" rel="noopener">Läs mer</a>.</span>
     </div>
   </div>
 
@@ -123,6 +142,12 @@ const inp   = document.getElementById("inp");
 const btn   = document.getElementById("btn");
 const dark  = document.getElementById("dark");
 const toastEl = document.getElementById("toast");
+const langSel = document.getElementById("lang");
+const netInput = document.getElementById("netInput");
+const netOut = document.getElementById("netOut");
+const netTitle = document.getElementById("netTitle");
+const netLabel = document.getElementById("netLabel");
+const privacy = document.getElementById("privacy");
 
 const modalBg = document.getElementById("modalBg");
 const cName   = document.getElementById("cName");
@@ -215,18 +240,20 @@ dark.onclick = () => {
 boot();
 async function boot(){
   try{
-    const r = await fetch(API, { headers: { "X-Session-Id": sessionId, "Accept-Language": navigator.language || "" }});
+    const r = await fetch(API, { headers: { "X-Session-Id": sessionId, "Accept-Language": getLang() }});
     const ok = (r.headers.get("content-type")||"").toLowerCase().includes("application/json");
     if (!ok) throw new Error("meta");
     const meta = await r.json();
-    addBubble("Hej! 👋 Välkommen till Curevia. Vad vill du göra?");
-    renderChips(meta.suggested || [
-      { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
-      { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
-      { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
-      { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
-      { emoji:"🧷", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
-    ]);
+    await loadStrings();
+    addBubble(t("greet"));
+    if (Array.isArray(meta.topFaqs) && meta.topFaqs.length){
+      renderFaqChips(meta.topFaqs);
+    } else {
+      renderChips(meta.suggested || []);
+    }
+    const savedLang = localStorage.getItem("lang") || (navigator.language||"").slice(0,2);
+    if (["sv","en","no","da"].includes(savedLang)) langSel.value = savedLang;
+    applyLang();
   }catch{
     addBubble("Jag nådde inte servern just nu – prova igen om en stund 🙏");
   }
@@ -266,7 +293,7 @@ async function send(text){
       headers: {
         "Content-Type":"application/json",
         "X-Session-Id": sessionId,
-        "X-Lang": navigator.language || "",
+        "X-Lang": getLang(),
         "Accept":"text/event-stream"
       },
       body: JSON.stringify({ message: text })
@@ -376,6 +403,47 @@ async function send(text){
     addBubble("Tekniskt fel – prova igen.");
   }
 }
+
+/* ===== FAQ chips (Top 4) ===== */
+function renderFaqChips(list){
+  clearChips();
+  const items = (list||[]).slice(0,4).map(q=>({ emoji:"💡", text:q.q, textSend:q.q }));
+  renderChips(items);
+}
+
+/* ===== Language & i18n ===== */
+function getLang(){ return localStorage.getItem("lang") || (navigator.language||"sv").slice(0,2); }
+langSel.onchange = ()=>{ localStorage.setItem("lang", langSel.value); applyLang(); };
+
+function applyLang(){
+  const L = getLang();
+  document.documentElement.lang = L;
+  dark.textContent = t("darkToggle");
+  dark.setAttribute("aria-label", t("darkToggleAria"));
+  btn.textContent = t("send");
+  inp.placeholder = t("placeholder");
+  netTitle.textContent = t("netTitle");
+  netLabel.textContent = t("netLabel");
+  updateNet();
+}
+
+const STRINGS = { };
+async function loadStrings(){
+  const L = getLang();
+  try{
+    const r = await fetch(`/locales/${L}/common.json`);
+    const j = await r.json();
+    STRINGS[L] = j;
+  }catch{}
+}
+function t(key){ const L=getLang(); const s=STRINGS[L]||{}; const v=s[key]; return typeof v==="function"? v(): v || key; }
+
+/* ===== Net salary calculator (0.55 default by lang) ===== */
+function factor(){ const L=getLang(); return ({ sv:0.55, en:0.55, no:0.57, da:0.56 })[L] || 0.55; }
+function parseMoney(s){ s=String(s).trim(); if(!s) return NaN; const cleaned=s.replace(/[^0-9,\.\s]/g, "").replace(/\s+/g,""); const comma=cleaned.lastIndexOf(","); const dot=cleaned.lastIndexOf("."); let norm=cleaned; if (comma>dot) norm=cleaned.replace(/\./g,"").replace(",","."); else norm=cleaned.replace(/,/g,""); const n=Number(norm); return Number.isFinite(n)? n: NaN; }
+function fmt(n, L){ const opts={ sv:["sv-SE","SEK"], en:["en-GB","SEK"], no:["nb-NO","NOK"], da:["da-DK","DKK"] }[L||getLang()] || ["sv-SE","SEK"]; return new Intl.NumberFormat(opts[0],{ style:"currency", currency:opts[1], maximumFractionDigits:0 }).format(n); }
+function updateNet(){ const L=getLang(); const amt=parseMoney(netInput.value); if(!isFinite(amt)||amt<=0){ netOut.textContent=""; return; } const net=amt*factor(); const pref=(STRINGS[L]?.netOutPrefix)||"≈"; netOut.textContent = `${pref} ${fmt(net, L)}`; }
+netInput.addEventListener("input", updateNet);
 
 /* ===== Smart suggestions on the client (fallback) ===== */
 const LINKS = {

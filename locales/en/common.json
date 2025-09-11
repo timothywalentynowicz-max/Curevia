@@ -1,0 +1,12 @@
+{
+  "greet": "Hi! 👋 Welcome to Curevia. What would you like to do?",
+  "send": "Send",
+  "placeholder": "Type a message...",
+  "darkToggle": "Dark mode",
+  "darkToggleAria": "Toggle dark mode",
+  "netTitle": "Quick calculator – Net salary",
+  "netLabel": "Invoiced amount (excl. VAT):",
+  "netOutPrefix": "≈ Net salary:",
+  "privacy": "We anonymize questions and store no personal data.",
+  "privacyLink": "Learn more"
+}

@@ -1,5 +1,32 @@
 {
   "name": "curevia-chat",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "version": "0.4.0",
+  "scripts": {
+    "dev": "node server.mjs",
+    "dev:seed": "node scripts/seed.mjs",
+    "migrate": "node scripts/migrate.mjs",
+    "lint": "eslint .",
+    "test": "vitest run --coverage",
+    "test:ui": "vitest",
+    "e2e": "playwright test",
+    "ci": "npm run lint && npm run test && npm run e2e"
+  },
+  "dependencies": {
+    "better-sqlite3": "9.6.0",
+    "cookie": "0.6.0",
+    "express": "4.19.2",
+    "rate-limiter-flexible": "5.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.47.2",
+    "@vitest/coverage-v8": "2.0.5",
+    "eslint": "8.57.0",
+    "eslint-config-standard": "17.1.0",
+    "eslint-plugin-import": "2.29.1",
+    "eslint-plugin-n": "16.6.2",
+    "eslint-plugin-promise": "6.4.0",
+    "vitest": "2.0.5"
+  }
 }
