@@ -26,6 +26,20 @@ npm run dev
 
 Open `http://localhost:8787/chat.html`
 
+## Deploy to Vercel
+
+1. Create a new Vercel project and import this repo
+2. Framework preset: “Other”
+3. Build command: `npm run migrate && npm run dev:seed || true` (optional seed)
+4. Output directory: `public`
+5. Add Environment Variables:
+   - `OPENAI_API_KEY`
+   - `SEARCH_SIMILARITY_THRESHOLD` (e.g. `0.82`)
+   - `FEATURE_FAQ_TOP4` = `1`
+   - `FEATURE_FALLBACK_OPENAI` = `1`
+6. Ensure Serverless Functions are enabled for `api/*` (Node.js 20). Vercel picks up `api/contact.js` and `api/curevia-chat.js` automatically.
+7. Optionally set `vercel.json` redirect to `/chat.html`.
+
 ## Migrations & Seed
 
 - `npm run migrate` – creates tables (`faqs`, `embeddings`, `queries`)
