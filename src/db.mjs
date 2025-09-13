@@ -2,7 +2,8 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
+const isVercel = !!process.env.VERCEL;
+const DATA_DIR = process.env.DATA_DIR || (isVercel ? "/tmp" : path.join(process.cwd(), "data"));
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "app.db");
 
 let dbInstance = null;

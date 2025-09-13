@@ -1,7 +1,7 @@
 // api/curevia-chat.js — v4.0 (i18n, KB+GPT fallback, caching, Top4, votes)
 
 import { detectLang as detectLangBySignals } from "../src/i18n.mjs";
-import { getTopFaqs, recordQuery, updateFaqUsage, voteFaq, findBestMatch } from "../src/db.mjs";
+import { ensureMigrations, getTopFaqs, recordQuery, updateFaqUsage, voteFaq, findBestMatch } from "../src/db.mjs";
 
 const OPENAI_API_KEY       = process.env.OPENAI_API_KEY;
 const OPENAI_API_BASE      = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
@@ -345,6 +345,7 @@ function buildUserPrompt(message){ return message; }
 
 // ==== HTTP handler ==================================================
 export default async function handler(req,res){
+  try{ ensureMigrations(); }catch{}
   // CORS
   res.setHeader("Access-Control-Allow-Origin","*");
   res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
