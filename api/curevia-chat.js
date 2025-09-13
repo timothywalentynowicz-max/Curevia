@@ -1,7 +1,6 @@
 // api/curevia-chat.js — v4.0 (i18n, KB+GPT fallback, caching, Top4, votes)
 
 import { detectLang as detectLangBySignals } from "../src/i18n.mjs";
-import { ensureMigrations, getTopFaqs, recordQuery, updateFaqUsage, voteFaq, findBestMatch } from "../src/db.mjs";
 
 const OPENAI_API_KEY       = process.env.OPENAI_API_KEY;
 const OPENAI_API_BASE      = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
@@ -345,7 +344,7 @@ function buildUserPrompt(message){ return message; }
 
 // ==== HTTP handler ==================================================
 export default async function handler(req,res){
-  try{ ensureMigrations(); }catch{}
+  // Lazy DB migrations only for write paths
   // CORS
   res.setHeader("Access-Control-Allow-Origin","*");
   res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
@@ -362,7 +361,13 @@ export default async function handler(req,res){
   if (req.method==="GET"){
     const qa = await loadQuickAnswers(); await loadRagIndex();
     const lang = parseHeaderLang(req) || "sv";
-    const topFaqs = FEATURE_FAQ_TOP4 ? getTopFaqs(lang, 4).map(f=>({ id:f.id, q:f.question })) : [];
+    let topFaqs = [];
+    if (FEATURE_FAQ_TOP4){
+      try{
+        const { getTopFaqs } = await import("../src/db.mjs");
+        topFaqs = getTopFaqs(lang, 4).map(f=>({ id:f.id, q:f.question }));
+      }catch{}
+    }
     return sendJSON(res, {
       ok:true, schema:SCHEMA_VERSION, route:"/api/curevia-chat",
       qaCount: qa.length,
@@ -387,7 +392,7 @@ export default async function handler(req,res){
   // feedback
   if (parsed?.feedback && typeof parsed.feedback === "object"){
     const { faqId, up } = parsed.feedback;
-    if (faqId) { try{ voteFaq(Number(faqId), up ? +1 : -1); updateFaqUsage(Number(faqId)); }catch{} }
+    if (faqId) { try{ const { voteFaq, updateFaqUsage } = await import("../src/db.mjs"); voteFaq(Number(faqId), up ? +1 : -1); updateFaqUsage(Number(faqId)); }catch{} }
     return sendJSON(res,{ ok:true });
   }
 
@@ -471,10 +476,8 @@ export default async function handler(req,res){
   // KB similarity search (DB cache)
   try{
     const v = await embedText(message);
-    const best = findBestMatch({ lang, queryVector: v, threshold: SEARCH_SIMILARITY_THRESHOLD });
+    let best=null; try{ const { findBestMatch, recordQuery, updateFaqUsage } = await import("../src/db.mjs"); best = findBestMatch({ lang, queryVector: v, threshold: SEARCH_SIMILARITY_THRESHOLD }); if (best){ updateFaqUsage(best.id); recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: best.id }); } }catch{}
     if (best){
-      updateFaqUsage(best.id);
-      recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: best.id });
       const reply = await translateIfNeeded(best.answer, lang);
       return sendJSON(res,{ version:SCHEMA_VERSION, reply, faqId:best.id, action:null, url:null, citations:[], suggestions:suggestFor("general", lang), confidence:0.93 });
     }
@@ -536,12 +539,12 @@ export default async function handler(req,res){
       }
       clearTimeout(to);
       const reply = polishReply(full.trim(), intent, shouldSuggestCTA(message,intent));
-      // cache in DB
+      // cache in DB (best-effort)
       let faqId=null; try{
         const vector = await embedText(message);
-        // Basic insert via direct DB helper exposed only in seed; emulate minimal insert through fetch to embeddings not available here.
-        // For simplicity in this handler, record query only; caching via non-stream path below. SSE path stores via faux query log.
-        recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: null });
+        const { upsertFaq, recordQuery } = await import("../src/db.mjs");
+        faqId = upsertFaq({ lang, question: message, answer: reply, vector });
+        recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: faqId });
       }catch{}
       sseSend(res,"final",{ version:SCHEMA_VERSION, reply, faqId, action:null, url:null, citations:[], suggestions:suggestFor(intent, lang), confidence:0.86 });
       res.end(); return;
@@ -561,12 +564,12 @@ export default async function handler(req,res){
       // Cache GPT answer in DB
       try{
         const vector = await embedText(message);
-        const { upsertFaq } = await import("../src/db.mjs");
+        const { upsertFaq, recordQuery } = await import("../src/db.mjs");
         const faqId = upsertFaq({ lang, question: message, answer: reply, vector });
         recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: faqId });
         return sendJSON(res,{ version:SCHEMA_VERSION, reply, faqId, action:null, url:null, citations:[], suggestions:suggestFor(intent, lang), confidence:0.88 });
       }catch{
-        recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: null });
+        try{ const { recordQuery } = await import("../src/db.mjs"); recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: null }); }catch{}
         return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:null, url:null, citations:[], suggestions:suggestFor(intent, lang), confidence:0.88 });
       }
     }
