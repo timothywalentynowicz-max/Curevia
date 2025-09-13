@@ -13,6 +13,8 @@ const FEATURE_FALLBACK_OPENAI = /^1|true$/i.test(process.env.FEATURE_FALLBACK_OP
 const SEARCH_SIMILARITY_THRESHOLD = Number(process.env.SEARCH_SIMILARITY_THRESHOLD || 0.82);
 const QUICK_ANSWERS_URL    = process.env.QUICK_ANSWERS_URL || "";
 const CONTACT_WEBHOOK_URL  = process.env.CONTACT_WEBHOOK_URL || "";
+const RESEND_API_KEY       = process.env.RESEND_API_KEY || "";
+const CONTACT_EMAIL        = process.env.CONTACT_EMAIL || "info@curevia.ai";
 const RAG_INDEX_URL        = process.env.RAG_INDEX_URL || "";
 
 const MAX_INPUT_LEN        = 2000;
@@ -543,6 +545,20 @@ export default async function handler(req,res){
           body: JSON.stringify({ source:"curevia-chat", ip, ts:new Date().toISOString(), sessionId, contact:c }) });
         if(!r.ok){ const txt=await r.text().catch(()=> ""); return res.status(502).json({ error:"Webhook error", details:txt }); }
       }catch{ return res.status(502).json({ error:"Webhook unreachable" });}
+    } else if (RESEND_API_KEY){
+      try{
+        const r = await fetch("https://api.resend.com/emails",{
+          method:"POST",
+          headers:{ "Authorization":`Bearer ${RESEND_API_KEY}`, "Content-Type":"application/json" },
+          body: JSON.stringify({
+            from: `Curevia Chat <no-reply@curevia.ai>`,
+            to: [CONTACT_EMAIL],
+            subject: `Kontakt från chatten` ,
+            text: `Ny intresseanmälan från chatten\n\nNamn: ${c.name}\nE-post: ${c.email}\nTelefon: ${c.phone||''}\nMeddelande: ${c.message||''}\n\nSession: ${sessionId||''} IP: ${ip}`
+          })
+        });
+        if(!r.ok){ const txt=await r.text().catch(()=>""); return res.status(502).json({ error:"Email send error", details:txt }); }
+      }catch{ return res.status(502).json({ error:"Email provider unreachable" }); }
     }
     return sendJSON(res,{ ok:true });
   }
