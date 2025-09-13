@@ -78,8 +78,8 @@
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h3>
+  <div class="wrap" role="main">
+    <h3 role="heading" aria-level="1">
       <span id="title">Curevia Assistant</span>
       <div style="display:flex; gap:8px; align-items:center">
         <select id="lang" class="toggle" aria-label="Language selector">
@@ -96,8 +96,8 @@
       <div class="bubble bot">Hej! 👋 Välkommen till Curevia. Vad vill du göra?</div>
     </div>
 
-    <div class="row">
-      <input id="inp" type="text" placeholder="Skriv ett meddelande..." autocomplete="off" />
+    <div class="row" role="form" aria-label="Chat input">
+      <input id="inp" type="text" placeholder="Skriv ett meddelande..." autocomplete="off" aria-label="Skriv ett meddelande" />
       <button id="btn" class="primary" type="button">Skicka</button>
     </div>
 
