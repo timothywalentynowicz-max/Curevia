@@ -140,7 +140,14 @@ async function send(text){
     if (!ct.includes('text/event-stream')){
       typing.destroy();
       const ok = ct.includes('application/json');
-      if (ok){ const data=await r.json(); bubble.innerText = data.reply || 'Tekniskt fel – prova igen.'; lastFaqId = data.faqId||null; if(Array.isArray(data.suggestions)) renderChips(data.suggestions); }
+      if (ok){
+        const data = await r.json();
+        bubble.innerText = data.reply || 'Tekniskt fel – prova igen.';
+        lastFaqId = data.faqId||null;
+        // Auto-open URL on demo actions
+        if (data?.data && data.data.action === 'open_url' && data.data.url){ try{ window.open(data.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
+        if(Array.isArray(data.suggestions)) renderChips(data.suggestions);
+      }
       else bubble.innerText = 'Tekniskt fel – prova igen.';
       addCopyIfLong(bubble); addFeedbackUI(bubble, lastFaqId);
       return;
@@ -151,7 +158,17 @@ async function send(text){
         const lines = raw.split(/\r?\n/); let event='message', data='';
         for(const line of lines){ if(!line) continue; if(line.startsWith('event:')) event=line.slice(6).trim(); else if(line.startsWith('data:')){ let p=line.slice(5); if(p.startsWith(' ')) p=p.slice(1); data+=p; } }
         if(!data) continue; if(event==='token'){ if(!gotAny){ typing.destroy(); gotAny=true; } bubble.innerText += data; finalText+=data; }
-        if(event==='final'){ typing.destroy(); try{ const j=JSON.parse(data); if(!gotAny && j.reply){ bubble.innerText = j.reply; } lastFaqId = j.faqId||null; if(Array.isArray(j.suggestions)) renderChips(j.suggestions); }catch{ if(!gotAny) bubble.innerText = data; } }
+        if(event==='final'){
+          typing.destroy();
+          try{
+            const j = JSON.parse(data);
+            if(!gotAny && j.reply){ bubble.innerText = j.reply; }
+            lastFaqId = j.faqId||null;
+            // Auto-open URL when backend signals open_url in data
+            if (j?.data && j.data.action === 'open_url' && j.data.url){ try{ window.open(j.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
+            if(Array.isArray(j.suggestions)) renderChips(j.suggestions);
+          }catch{ if(!gotAny) bubble.innerText = data; }
+        }
       }
     }
     if(!bubble.innerText){ typing.destroy(); bubble.innerText = 'Inget svar – prova igen.'; }
