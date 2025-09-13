@@ -114,6 +114,14 @@ async function patchSess(sessionId, patch){
   sessMem.set(sessionId, { ...cur, ...patch, lastSeenAt: Date.now() });
 }
 
+async function appendSessHistory(sessionId, role, content){
+  if (!sessionId) return;
+  const cur = await getSess(sessionId);
+  const prev = Array.isArray(cur.history) ? cur.history.slice(-9) : [];
+  prev.push({ role, content: String(content||'').slice(0, 2000) });
+  await patchSess(sessionId, { history: prev });
+}
+
 // ==== Language =====================================================
 function parseHeaderLang(req){
   const x = String(req.headers["x-lang"] || "");
@@ -396,11 +404,19 @@ export default async function handler(req,res){
       }catch{}
     }
     const suggested = suggestFor("general", lang);
+    // Include RAG titles as additional suggested strings
+    let ragSuggestions = [];
+    if (ragIndex && Array.isArray(ragIndex.chunks)){
+      ragSuggestions = ragIndex.chunks.slice(0,4).map(c=> c.title || c.content?.slice(0,80) || '').filter(Boolean);
+    }
     return sendJSON(res, {
       ok:true, schema:SCHEMA_VERSION, route:"/api/curevia-chat",
       qaCount: qa.length,
       suggested,
-      suggestedQuestions: toSuggestedQuestions(topFaqs.length ? topFaqs : suggested),
+      suggestedQuestions: [
+        ...toSuggestedQuestions(topFaqs.length ? topFaqs : suggested),
+        ...ragSuggestions
+      ].filter(Boolean).slice(0,8),
       topFaqs,
       hasKey:Boolean(OPENAI_API_KEY), ragReady:Boolean(ragIndex),
       model:OPENAI_MODEL, streaming:true, contactWebhook:Boolean(CONTACT_WEBHOOK_URL)
@@ -479,6 +495,8 @@ export default async function handler(req,res){
 
   // intents
   const intent = detectIntent(message);
+  // Append to session history
+  await appendSessHistory(sessionId, 'user', message);
   if (intent==="contact_me"){
     const reply = lang==="en" ? "Absolutely! Leave your details and we’ll get back to you shortly."
                : lang==="no" ? "Selvfølgelig! Legg igjen kontaktinfo så hører vi av oss snart."
@@ -532,11 +550,14 @@ export default async function handler(req,res){
   if (!rateLimitOpenAIOk(ip)) return res.status(429).json({ error:"Too Many Requests (OpenAI)" });
 
   const system = `${PROMPTS[lang] || PROMPTS.sv}\n${POLICY}`;
+  const sess = await getSess(sessionId);
+  const history = Array.isArray(sess.history) ? sess.history : [];
+  const historyMessages = history.slice(-8).map(h=> ({ role: h.role==='assistant'?'assistant':'user', content: h.content }));
   const basePayload = {
     model: OPENAI_MODEL,
     temperature: 0.35,
     max_tokens: 240,
-    messages: [{ role:"system", content:system }, { role:"user", content:userPrompt }]
+    messages: [{ role:"system", content:system }, ...historyMessages, { role:"user", content:userPrompt }]
   };
 
   const controller = new AbortController();
@@ -580,6 +601,7 @@ export default async function handler(req,res){
         faqId = upsertFaq({ lang, question: message, answer: reply, vector });
         recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: faqId });
       }catch{}
+      await appendSessHistory(sessionId, 'assistant', reply);
       sseSend(res,"final",{ version:SCHEMA_VERSION, reply, faqId, data:shapeData(null,null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.86 });
       res.end(); return;
 
@@ -601,9 +623,11 @@ export default async function handler(req,res){
         const { upsertFaq, recordQuery } = await import("../src/db.mjs");
         const faqId = upsertFaq({ lang, question: message, answer: reply, vector });
         recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: faqId });
+        await appendSessHistory(sessionId, 'assistant', reply);
         return sendJSON(res,{ version:SCHEMA_VERSION, reply, faqId, data:shapeData(null,null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.88 });
       }catch{
         try{ const { recordQuery } = await import("../src/db.mjs"); recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: null }); }catch{}
+        await appendSessHistory(sessionId, 'assistant', reply);
         return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(null,null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.88 });
       }
     }
