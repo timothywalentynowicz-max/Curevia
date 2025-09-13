@@ -409,13 +409,22 @@ export default async function handler(req,res){
     if (ragIndex && Array.isArray(ragIndex.chunks)){
       ragSuggestions = ragIndex.chunks.slice(0,4).map(c=> c.title || c.content?.slice(0,80) || '').filter(Boolean);
     }
+    // Include last user questions from session history (max 2)
+    let historyQs = [];
+    try{
+      const sess = await getSess(sessionId);
+      if (sess && Array.isArray(sess.history)){
+        historyQs = sess.history.filter(h=>h.role==='user').slice(-2).map(h=> h.content).filter(Boolean);
+      }
+    }catch{}
     return sendJSON(res, {
       ok:true, schema:SCHEMA_VERSION, route:"/api/curevia-chat",
       qaCount: qa.length,
       suggested,
       suggestedQuestions: [
         ...toSuggestedQuestions(topFaqs.length ? topFaqs : suggested),
-        ...ragSuggestions
+        ...ragSuggestions,
+        ...historyQs
       ].filter(Boolean).slice(0,8),
       topFaqs,
       hasKey:Boolean(OPENAI_API_KEY), ragReady:Boolean(ragIndex),

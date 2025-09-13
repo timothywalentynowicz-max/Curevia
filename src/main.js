@@ -91,7 +91,7 @@ function applyLang(){ const L=getLang(); const dark=document.getElementById('dar
     const controller=new AbortController(); const to=setTimeout(()=>controller.abort(),4000);
     const r = await fetch(API, { headers:{ 'X-Session-Id': sessionId, 'Accept-Language': getLang() }, signal: controller.signal });
     clearTimeout(to);
-    const ok=(r.headers.get('content-type')||'').toLowerCase().includes('application/json'); if(ok){ const meta=await r.json(); if(Array.isArray(meta.topFaqs) && meta.topFaqs.length){ renderChips(meta.topFaqs.map(q=>({ emoji:'💡', text:q.q }))); } else if (Array.isArray(meta.suggested) && meta.suggested.length){ renderChips(meta.suggested); } }
+    const ok=(r.headers.get('content-type')||'').toLowerCase().includes('application/json'); if(ok){ const meta=await r.json(); if(Array.isArray(meta.suggestedQuestions) && meta.suggestedQuestions.length){ renderChips(meta.suggestedQuestions.map(q=>({ emoji:'💡', text:q }))); } else if(Array.isArray(meta.topFaqs) && meta.topFaqs.length){ renderChips(meta.topFaqs.map(q=>({ emoji:'💡', text:q.q }))); } else if (Array.isArray(meta.suggested) && meta.suggested.length){ renderChips(meta.suggested); } }
   }catch{}
 
   // Expose minimal API for external bubble that mounts into #cv-chat-panel
