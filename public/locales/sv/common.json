@@ -1,0 +1,12 @@
+{
+  "greet": "Hej! 👋 Välkommen till Curevia. Vad vill du göra?",
+  "send": "Skicka",
+  "placeholder": "Skriv ett meddelande...",
+  "darkToggle": "Mörkt läge",
+  "darkToggleAria": "Växla mörkt läge",
+  "netTitle": "Snabb kalkyl – Nettolön",
+  "netLabel": "Fakturerat belopp (exkl. moms):",
+  "netOutPrefix": "≈ Nettolön:",
+  "privacy": "Vi anonymiserar frågor och sparar inga personuppgifter.",
+  "privacyLink": "Läs mer"
+}

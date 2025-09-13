@@ -1,3 +1,4 @@
+export const config = { runtime: 'nodejs' };
 // api/contact.js
 // Skickar kontakt-mail via Resend.
 // Env i Vercel:
@@ -15,7 +16,7 @@ function isEmail(s=""){ return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s); }
 function setCors(res){
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Session-Id, X-Lang, Accept, Accept-Language");
 }
 
 export default async function handler(req, res){

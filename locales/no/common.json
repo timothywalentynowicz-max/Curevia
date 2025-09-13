@@ -1,0 +1,12 @@
+{
+  "greet": "Hei! 👋 Velkommen til Curevia. Hva vil du gjøre?",
+  "send": "Send",
+  "placeholder": "Skriv en melding...",
+  "darkToggle": "Mørk modus",
+  "darkToggleAria": "Bytt mørk modus",
+  "netTitle": "Hurtig kalkulator – Nettolønn",
+  "netLabel": "Fakturert beløp (eks. mva):",
+  "netOutPrefix": "≈ Nettolønn:",
+  "privacy": "Vi anonymiserer spørsmål og lagrer ingen persondata.",
+  "privacyLink": "Les mer"
+}
