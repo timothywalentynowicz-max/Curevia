@@ -59,6 +59,13 @@ const privacy = h('div', { class:'bubble bot', style:'font-size:13px' },
 function addBubble(text, who='bot'){ const div=h('div',{ class:'bubble ' + (who==='me'?'me':'bot')}); if(text) div.innerText=text; log.appendChild(div); log.scrollTop=log.scrollHeight; return div; }
 function addCopyIfLong(div){ if(!div||!div.innerText) return; if(div.innerText.length<=120) return; const cp=h('div',{ class:'copy' },'📋 Kopiera'); cp.onclick=()=> navigator.clipboard.writeText(div.innerText); div.appendChild(cp); }
 function typingBubble(){ const b = addBubble('…','bot'); return { destroy(){ try{ b.remove(); }catch{} } }; }
+function shouldAutoOpen(payload, lastText){
+  if (!payload || !payload.data || payload.data.action !== 'open_url' || !payload.data.url) return false;
+  const t = (lastText||'').toLowerCase();
+  const isDemo = /(demo|visa plattformen|genomgång|boka.*möte|book.*demo)/.test(t);
+  const isRegister = /(registrera|signa|skapa konto|sign ?up)/.test(t);
+  return isDemo || isRegister;
+}
 
 // Chips
 let chipsBar=null;
@@ -144,8 +151,8 @@ async function send(text){
         const data = await r.json();
         bubble.innerText = data.reply || 'Tekniskt fel – prova igen.';
         lastFaqId = data.faqId||null;
-        // Auto-open URL on demo actions
-        if (data?.data && data.data.action === 'open_url' && data.data.url){ try{ window.open(data.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
+        // Guarded auto-open (demo/register intents only)
+        if (shouldAutoOpen(data, text)) { try{ window.open(data.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
         if(Array.isArray(data.suggestions)) renderChips(data.suggestions);
       }
       else bubble.innerText = 'Tekniskt fel – prova igen.';
@@ -164,8 +171,8 @@ async function send(text){
             const j = JSON.parse(data);
             if(!gotAny && j.reply){ bubble.innerText = j.reply; }
             lastFaqId = j.faqId||null;
-            // Auto-open URL when backend signals open_url in data
-            if (j?.data && j.data.action === 'open_url' && j.data.url){ try{ window.open(j.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
+            // Guarded auto-open (demo/register intents only)
+            if (shouldAutoOpen(j, text)) { try{ window.open(j.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
             if(Array.isArray(j.suggestions)) renderChips(j.suggestions);
           }catch{ if(!gotAny) bubble.innerText = data; }
         }
