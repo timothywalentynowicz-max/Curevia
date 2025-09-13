@@ -4,11 +4,6 @@
   "redirects": [
     { "source": "/", "destination": "/chat.html", "permanent": false }
   ],
-  "functions": {
-    "api/**": {
-      "runtime": "nodejs20.x"
-    }
-  },
   "headers": [
     {
       "source": "/api/(.*)",
