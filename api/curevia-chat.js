@@ -345,6 +345,7 @@ function suggestFor(intent, lang="sv"){
 // ==== RAG (same behavior as before, trimmed) =======================
 let ragIndex=null;
 async function loadRagIndex(){ if(!RAG_INDEX_URL) return null; try{ const r=await fetch(RAG_INDEX_URL,{cache:"no-store"}); if(r.ok){ ragIndex=await r.json(); } }catch{} return ragIndex; }
+let ragVectors=null; // [{ idx, vector }]
 
 // Embeddings helper (with test fake)
 async function embedText(text){
@@ -361,6 +362,35 @@ async function embedText(text){
   });
   const j = await r.json();
   return j?.data?.[0]?.embedding || [];
+}
+
+function cosineSim(a=[], b=[]){
+  let dot=0, na=0, nb=0; const n=Math.min(a.length,b.length);
+  for(let i=0;i<n;i++){ const x=a[i]||0, y=b[i]||0; dot+=x*y; na+=x*x; nb+=y*y; }
+  if (!na || !nb) return 0; return dot/Math.sqrt(na*nb);
+}
+
+async function ensureRagVectors(){
+  if (!ragIndex || !Array.isArray(ragIndex.chunks)) return null;
+  if (ragVectors && ragVectors.length===ragIndex.chunks.length) return ragVectors;
+  ragVectors = [];
+  for (let i=0;i<ragIndex.chunks.length;i++){
+    const c = ragIndex.chunks[i];
+    const v = await embedText(String(c.content||c.title||""));
+    ragVectors.push({ idx:i, vector:v });
+  }
+  return ragVectors;
+}
+
+async function ragBestMatch(query){
+  if (!ragIndex || !Array.isArray(ragIndex.chunks)) return null;
+  const qv = await embedText(query);
+  const vecs = await ensureRagVectors();
+  let bestIdx=-1, bestScore=0;
+  for (const rv of vecs){ const s = cosineSim(qv, rv.vector); if (s>bestScore){ bestScore=s; bestIdx=rv.idx; } }
+  if (bestIdx<0) return null;
+  const chunk = ragIndex.chunks[bestIdx];
+  return { score: bestScore, chunk };
 }
 
 function buildUserPrompt(message){ return message; }
@@ -541,6 +571,17 @@ export default async function handler(req,res){
     if (best){
       const reply = await translateIfNeeded(best.answer, lang);
       return sendJSON(res,{ version:SCHEMA_VERSION, reply, faqId:best.id, data:shapeData(null,null), suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.93 });
+    }
+  }catch{}
+
+  // RAG semantic router (before GPT)
+  try{
+    if (ragIndex){
+      const hit = await ragBestMatch(message);
+      if (hit && hit.score >= Math.max(0.75, SEARCH_SIMILARITY_THRESHOLD-0.05)){
+        const reply = await translateIfNeeded(hit.chunk.content || hit.chunk.title || "", lang);
+        return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_URL, hit.chunk.url||null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:hit.score });
+      }
     }
   }catch{}
 
