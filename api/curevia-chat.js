@@ -2,6 +2,7 @@ export const config = { runtime: 'nodejs' };
 // api/curevia-chat.js — v4.0 (i18n, KB+GPT fallback, caching, Top4, votes)
 
 import { detectLang as detectLangBySignals } from "../src/i18n.mjs";
+import { PinnedFAQs } from "../src/data/faqs.mjs";
 
 const OPENAI_API_KEY       = process.env.OPENAI_API_KEY;
 const OPENAI_API_BASE      = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
@@ -18,6 +19,12 @@ const MAX_INPUT_LEN        = 2000;
 const OPENAI_TIMEOUT_MS    = 18000;
 const OPENAI_RL_PER_MIN    = 10;
 const RATE_LIMIT_PER_MIN   = 40;
+
+// Configurable economic assumptions
+const PLATTFORMSAVGIFT = Number(process.env.PLATTFORMSAVGIFT ?? 0.05);
+const AG_PCT = Number(process.env.AG_PCT ?? 0.3142);
+const SEMESTER_PCT = Number(process.env.SEMESTER_PCT ?? 0);
+const SKATT_PCT_DEFAULT = Number(process.env.SKATT_PCT_DEFAULT ?? 0.32);
 
 const LINKS = {
   demo: "https://calendly.com/tim-curevia/30min",
@@ -262,6 +269,47 @@ function parseInvoiceAmount(msg=""){
   return amountExVat;
 }
 
+function formatNetSalaryMessage(input, result){
+  const pct = (n)=> `${(n*100).toFixed(1)}%`;
+  return [
+    `Här är din uppskattning:`,
+    `• Efter avgift: ${result.efterAvgift.toLocaleString('sv-SE')} kr (avgift ${pct(input.plattformAvgiftPct)})`,
+    `• Bruttolön: ${result.bruttolön.toLocaleString('sv-SE')} kr`,
+    input.semesterInklPct>0 ? `• Bruttolön inkl. semester (${pct(input.semesterInklPct)}): ${result.bruttolönMedSemester.toLocaleString('sv-SE')} kr` : undefined,
+    `• Preliminär skatt (${pct(input.skattPct)}): −${result.preliminärSkatt.toLocaleString('sv-SE')} kr`,
+    `• Nettolön: ${result.nettolön.toLocaleString('sv-SE')} kr`,
+    input.skattefriaErsSEK>0 ? `• Skattefria ersättningar: +${result.skattefriaErsSEK.toLocaleString('sv-SE')} kr` : undefined,
+    `= Utbetalning totalt: ${result.nettoutbetalningTotalt.toLocaleString('sv-SE')} kr`,
+    ``,
+    `Vill du finjustera med din skattetabell eller jämföra mot fakturering via eget AB?`
+  ].filter(Boolean).join('\n');
+}
+
+function calcNetFromParams(amountExVat, opts={}){
+  const platt = Math.max(0, Math.min(0.2, Number(opts.plattformAvgiftPct ?? PLATTFORMSAVGIFT)));
+  const ag    = Math.max(0, Number(opts.arbetsgivaravgiftPct ?? AG_PCT));
+  const skatt = Math.max(0, Math.min(0.6, Number(opts.skattPct ?? SKATT_PCT_DEFAULT)));
+  const sem   = Math.max(0, Number(opts.semesterInklPct ?? SEMESTER_PCT));
+  const skfr  = Math.max(0, Number(opts.skattefriaErsSEK ?? 0));
+
+  const efterAvgift = amountExVat * (1 - platt);
+  const bruttolön = efterAvgift / (1 + ag);
+  const bruttolönMedSemester = bruttolön * (1 + sem);
+  const preliminärSkatt = bruttolönMedSemester * skatt;
+  const nettolön = bruttolönMedSemester - preliminärSkatt;
+  const nettoutbetalningTotalt = nettolön + skfr;
+  const round = (n)=> Math.round(n);
+  return {
+    efterAvgift: round(efterAvgift),
+    bruttolön: round(bruttolön),
+    bruttolönMedSemester: round(bruttolönMedSemester),
+    preliminärSkatt: round(preliminärSkatt),
+    nettolön: round(nettolön),
+    skattefriaErsSEK: round(skfr),
+    nettoutbetalningTotalt: round(nettoutbetalningTotalt)
+  };
+}
+
 // ==== Intent + CTA + Suggestions ===================================
 function detectIntent(text=""){
   const t = text.toLowerCase();
@@ -461,6 +509,7 @@ export default async function handler(req,res){
       qaCount: qa.length,
       suggested,
       suggestedQuestions: dedup,
+      pinnedFAQs: PinnedFAQs,
       topFaqs,
       hasKey:Boolean(OPENAI_API_KEY), ragReady:Boolean(ragIndex),
       model:OPENAI_MODEL, streaming:true, contactWebhook:Boolean(CONTACT_WEBHOOK_URL)
@@ -529,12 +578,22 @@ export default async function handler(req,res){
     return sendJSON(res,{ version:SCHEMA_VERSION, reply:msg, data:shapeData(null,null), suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.95 });
   }
 
-  // net salary
-  const amountExVat = parseInvoiceAmount(message);
+  // net salary (intent + amount defaulting)
+  const nettoIntent = /(netto|nett[öo]l[öo]n|fakturera|faktura)/i.test(message);
+  let amountExVat = parseInvoiceAmount(message);
+  if (nettoIntent){ if (!amountExVat) amountExVat = 100000; }
   if (amountExVat){
-    const { text } = calcNetFromInvoiceExVat(amountExVat, assumptions||{});
-    const reply = await translateIfNeeded(text, lang);
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(null,null), suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.86 });
+    const params = {
+      plattformAvgiftPct: (assumptions&&assumptions.platformFeePct) ?? PLATTFORMSAVGIFT,
+      arbetsgivaravgiftPct: (assumptions&&assumptions.agAvg) ?? AG_PCT,
+      skattPct: (assumptions&&assumptions.taxRate) ?? SKATT_PCT_DEFAULT,
+      semesterInklPct: (assumptions&&assumptions.semesterPct) ?? SEMESTER_PCT,
+      skattefriaErsSEK: (assumptions&&assumptions.skattefriaErsSEK) ?? 0
+    };
+    const result = calcNetFromParams(amountExVat, params);
+    const reply = formatNetSalaryMessage({ fakturabeloppExMoms: amountExVat, ...params }, result);
+    const translated = await translateIfNeeded(reply, lang);
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: translated, data:shapeData(null,null), pinnedFAQs: PinnedFAQs, suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.9 });
   }
 
   // intents
