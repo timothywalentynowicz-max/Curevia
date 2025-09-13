@@ -87,9 +87,12 @@ function toSuggestedQuestions(items=[]){
   return list.slice(0, 8);
 }
 
-function shapeData(action=null, url=null){
-  if (!action && !url) return null;
-  return { action, url };
+function shapeData(action=null, url=null, intent=null){
+  const obj = {};
+  if (action) obj.action = action;
+  if (url) obj.url = url;
+  if (intent) obj.intent = intent;
+  return Object.keys(obj).length ? obj : null;
 }
 
 // ==== Redis session (optional) =====================================
@@ -500,11 +503,17 @@ export default async function handler(req,res){
       }
     }catch{}
     // Build deduped suggestedQuestions: Top FAQ (if any) -> RAG titles -> History -> suggested defaults
+    const seedTop3 = [
+      "Vad kostar det?",
+      "Jag vill boka demo",
+      "Hur mycket tjänar jag netto?"
+    ];
     const topFaqTexts = toSuggestedQuestions(topFaqs);
     const suggestedDefaults = toSuggestedQuestions(suggested);
-    const combined = [...topFaqTexts, ...ragSuggestions, ...historyQs, ...suggestedDefaults];
+    const combined = [...seedTop3, ...topFaqTexts, ...ragSuggestions, ...historyQs, ...suggestedDefaults];
     const seen=new Set();
-    const dedup = combined.filter(q=>{ const key=String(q).trim().toLowerCase(); if(!key||seen.has(key)) return false; seen.add(key); return true; }).slice(0,8);
+    const dedupAll = combined.filter(q=>{ const key=String(q).trim().toLowerCase(); if(!key||seen.has(key)) return false; seen.add(key); return true; });
+    const dedup = dedupAll.slice(0,3);
 
     return sendJSON(res, {
       ok:true, schema:SCHEMA_VERSION, route:"/api/curevia-chat",
@@ -620,15 +629,15 @@ export default async function handler(req,res){
     const reply = lang==="en" ? "Absolutely! Leave your details and we’ll get back to you shortly."
                : lang==="no" ? "Selvfølgelig! Legg igjen kontaktinfo så hører vi av oss snart."
                               : "Absolut! Fyll i dina kontaktuppgifter så hör vi av oss inom kort.";
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_CONTACT_FORM, null), suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.95 });
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_CONTACT_FORM, null, 'contact'), suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.95 });
   }
   if (intent==="register_provider"){
     const base = `Här kan du registrera din verksamhet: ${LINKS.regProvider}`;
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply: await translateIfNeeded(base, lang), data:shapeData(ACTIONS.OPEN_URL, LINKS.regProvider), suggestions:suggestFor("provider", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("provider", lang)), confidence:0.95 });
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: await translateIfNeeded(base, lang), data:shapeData(ACTIONS.OPEN_URL, LINKS.regProvider, 'register_provider'), suggestions:suggestFor("provider", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("provider", lang)), confidence:0.95 });
   }
   if (intent==="register_consult"){
     const base = `Toppen! Registrera din konsultprofil här: ${LINKS.regConsult}`;
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply: await translateIfNeeded(base, lang), data:shapeData(ACTIONS.OPEN_URL, LINKS.regConsult), suggestions:suggestFor("consult", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("consult", lang)), confidence:0.95 });
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: await translateIfNeeded(base, lang), data:shapeData(ACTIONS.OPEN_URL, LINKS.regConsult, 'register_consult'), suggestions:suggestFor("consult", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("consult", lang)), confidence:0.95 });
   }
   if (intent==="provider_demo" || intent==="consult_demo" || intent==="demo_any"){
     const lead = lang==='en' ? "Great — let’s book a short demo."
@@ -636,7 +645,7 @@ export default async function handler(req,res){
                               : "Toppen – låt oss boka en kort demo.";
     const reply = `${lead} ${LINKS.demo}`;
     const bucket = intent==="consult_demo" ? "consult" : "provider";
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_URL, LINKS.demo), suggestions:suggestFor(bucket, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(bucket, lang)), confidence:0.98 });
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_URL, LINKS.demo, 'demo'), suggestions:suggestFor(bucket, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(bucket, lang)), confidence:0.98 });
   }
 
   // KB similarity search (DB cache)
@@ -655,7 +664,7 @@ export default async function handler(req,res){
       const hit = await ragBestMatch(message);
       if (hit && hit.score >= Math.max(0.75, SEARCH_SIMILARITY_THRESHOLD-0.05)){
         const reply = await translateIfNeeded(hit.chunk.content || hit.chunk.title || "", lang);
-        return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_URL, hit.chunk.url||null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:hit.score });
+        return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_URL, hit.chunk.url||null, 'rag'), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:hit.score });
       }
     }
   }catch{}
@@ -742,7 +751,7 @@ export default async function handler(req,res){
         recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: faqId });
       }catch{}
       await appendSessHistory(sessionId, 'assistant', reply);
-      sseSend(res,"final",{ version:SCHEMA_VERSION, reply, faqId, data:shapeData(null,null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.86 });
+      sseSend(res,"final",{ version:SCHEMA_VERSION, reply, faqId, data:shapeData(null,null,intent), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.86 });
       res.end(); return;
 
     } else {
@@ -764,11 +773,11 @@ export default async function handler(req,res){
         const faqId = upsertFaq({ lang, question: message, answer: reply, vector });
         recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: faqId });
         await appendSessHistory(sessionId, 'assistant', reply);
-        return sendJSON(res,{ version:SCHEMA_VERSION, reply, faqId, data:shapeData(null,null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.88 });
+        return sendJSON(res,{ version:SCHEMA_VERSION, reply, faqId, data:shapeData(null,null,intent), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.88 });
       }catch{
         try{ const { recordQuery } = await import("../src/db.mjs"); recordQuery({ lang, userText: anonymizeQuery(message), matchedFaqId: null }); }catch{}
         await appendSessHistory(sessionId, 'assistant', reply);
-        return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(null,null), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.88 });
+        return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(null,null,intent), suggestions:suggestFor(intent, lang), suggestedQuestions: toSuggestedQuestions(suggestFor(intent, lang)), confidence:0.88 });
       }
     }
   }catch(e){
