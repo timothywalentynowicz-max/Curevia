@@ -374,7 +374,19 @@ export default async function handler(req,res){
 
   // GET meta
   if (req.method==="GET"){
-    const qa = await loadQuickAnswers(); await loadRagIndex();
+    const qa = await loadQuickAnswers();
+    // Try to load RAG index from env, else from same host (public file)
+    if (!ragIndex){
+      if (RAG_INDEX_URL){ await loadRagIndex(); }
+      else {
+        try{
+          const proto = (req.headers['x-forwarded-proto']||'https');
+          const host  = req.headers.host;
+          const r = await fetch(`${proto}://${host}/curevia-rag-index.json`, { cache:'no-store' });
+          if (r.ok){ ragIndex = await r.json(); }
+        }catch{}
+      }
+    }
     const lang = parseHeaderLang(req) || "sv";
     let topFaqs = [];
     if (FEATURE_FAQ_TOP4){

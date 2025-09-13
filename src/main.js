@@ -93,6 +93,26 @@ function applyLang(){ const L=getLang(); const dark=document.getElementById('dar
     clearTimeout(to);
     const ok=(r.headers.get('content-type')||'').toLowerCase().includes('application/json'); if(ok){ const meta=await r.json(); if(Array.isArray(meta.topFaqs) && meta.topFaqs.length){ renderChips(meta.topFaqs.map(q=>({ emoji:'💡', text:q.q }))); } else if (Array.isArray(meta.suggested) && meta.suggested.length){ renderChips(meta.suggested); } }
   }catch{}
+
+  // Expose minimal API for external bubble that mounts into #cv-chat-panel
+  window.CureviaChat = {
+    getSuggested: async function(){
+      const r = await fetch(API, { headers:{ 'X-Session-Id': sessionId, 'Accept-Language': getLang() } });
+      const j = await r.json().catch(()=>({}));
+      return {
+        suggestedQuestions: Array.isArray(j.suggestedQuestions)? j.suggestedQuestions : (Array.isArray(j.suggested)? (j.suggested.map(it=> it.text||it.label||'').filter(Boolean)) : [])
+      };
+    },
+    ask: async function(message){
+      const r = await fetch(API, { method:'POST', headers:{ 'Content-Type':'application/json', 'X-Session-Id': sessionId }, body: JSON.stringify({ message }) });
+      const j = await r.json().catch(()=>({ reply:'Tekniskt fel – prova igen.' }));
+      return {
+        reply: j.reply,
+        suggestedQuestions: Array.isArray(j.suggestedQuestions)? j.suggestedQuestions : (Array.isArray(j.suggestions)? (j.suggestions.map(it=> it.text||it.label||'').filter(Boolean)) : []),
+        data: j.data && typeof j.data==='object' ? j.data : (j.action||j.url ? { action:j.action||null, url:j.url||null } : null)
+      };
+    }
+  };
 })();
 
 // Send logic
