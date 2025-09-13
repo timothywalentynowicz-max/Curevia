@@ -92,11 +92,13 @@
       </div>
     </h3>
 
-    <div id="log" aria-live="polite" aria-atomic="false"></div>
+    <div id="log" aria-live="polite" aria-atomic="false">
+      <div class="bubble bot">Hej! 👋 Välkommen till Curevia. Vad vill du göra?</div>
+    </div>
 
     <div class="row">
       <input id="inp" type="text" placeholder="Skriv ett meddelande..." autocomplete="off" />
-      <button id="btn" class="primary" type="button" disabled>Skicka</button>
+      <button id="btn" class="primary" type="button">Skicka</button>
     </div>
 
     <div id="netcard" class="bubble bot" aria-live="polite">
@@ -274,7 +276,7 @@ async function boot(){
 /* ===== Send ===== */
 let lastUserText = "";
 btn.onclick = ()=> send(inp.value);
-inp.addEventListener("input", () => { btn.disabled = !inp.value.trim(); });
+inp.addEventListener("input", () => { /* keep enabled */ });
 inp.addEventListener("keydown", e => {
   if (e.key === "Enter"){
     e.preventDefault();
