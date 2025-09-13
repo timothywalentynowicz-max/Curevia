@@ -503,7 +503,7 @@ export default async function handler(req,res){
       }
     }catch{}
     // Build deduped suggestedQuestions: Top FAQ (if any) -> RAG titles -> History -> suggested defaults
-    // Compute live top-3 based on queries table + upvotes/recency
+    // Compute live top-3 based on recent queries + FAQ upvotes
     let dynamicTop=[];
     try{
       const { getDb } = await import("../src/db.mjs");
@@ -514,11 +514,25 @@ export default async function handler(req,res){
         { q: "Jag vill boka demo", patterns:[/demo|boka.*möte|book.*demo|genomgång|visa plattform/] },
         { q: "Hur mycket tjänar jag netto?", patterns:[/netto|nett[oö]l[öo]n|fakturera/] }
       ];
+      // frequency from queries
       for (const item of popular){
         const hits = last30.filter(t=> item.patterns.some(p=> p.test(t))).length;
-        dynamicTop.push({ q:item.q, hits });
+        dynamicTop.push({ q:item.q, hits, upvotes:0, score:0 });
       }
-      dynamicTop.sort((a,b)=> b.hits - a.hits);
+      // aggregate FAQ upvotes per bucket
+      try{
+        const rows = db.prepare("SELECT question, upvotes FROM faqs WHERE lang=?").all(lang);
+        for (const r of rows){
+          const qtext = (r.question||'').toLowerCase();
+          for (const bucket of dynamicTop){
+            const patterns = popular.find(p=> p.q===bucket.q)?.patterns || [];
+            if (patterns.some(p=> p.test(qtext))){ bucket.upvotes += Number(r.upvotes||0); }
+          }
+        }
+      }catch{}
+      const HITS_W = 1, UPVOTE_W = 5;
+      for (const b of dynamicTop){ b.score = b.hits*HITS_W + b.upvotes*UPVOTE_W; }
+      dynamicTop.sort((a,b)=> b.score - a.score);
       dynamicTop = dynamicTop.map(x=> x.q);
     }catch{}
     if (!dynamicTop || dynamicTop.length===0){ dynamicTop = ["Vad kostar det?","Jag vill boka demo","Hur mycket tjänar jag netto?"]; }
