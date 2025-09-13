@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Curevia – Chat</title>
+  <style>
+    :root{ --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a; --border:#cbd5e1; --focus:#94a3b8; --toast:#111827; --toastText:#fff; }
+    *{ box-sizing:border-box }
+    body{ font-family:system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--text); margin:0 }
+    .wrap{ max-width:520px; margin:12px auto; padding:12px }
+    h3{ margin:0 0 10px; display:flex; align-items:center; justify-content:space-between; gap:8px }
+    .toggle{ border:1px solid var(--border); background:#fff; color:#111827; border-radius:999px; padding:6px 12px; cursor:pointer }
+    .toggle:focus-visible{ outline:3px solid var(--focus); outline-offset:2px }
+
+    #log{ max-height:70vh; overflow:auto; padding-bottom:8px }
+    .bubble{ padding:10px 12px; border-radius:16px; margin:8px 0; max-width:90%; white-space:pre-wrap; line-height:1.35; position:relative }
+    .bot{ background:var(--bot); border-top-left-radius:6px }
+    .me{ background:var(--me); color:#fff; margin-left:auto; border-top-right-radius:6px }
+    .copy{ font-size:12px; color:#64748b; margin-top:6px; cursor:pointer; user-select:none }
+
+    .row{ display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:8px 0; border-top:1px solid var(--border) }
+    input[type="text"]{ flex:1; padding:12px; border:1px solid var(--border); border-radius:12px }
+    button.primary{ padding:12px 16px; border:0; border-radius:12px; background:#111827; color:#fff; cursor:pointer }
+    button.primary:disabled{ opacity:.6; cursor:not-allowed }
+    button.primary:focus-visible{ outline:3px solid var(--focus); outline-offset:2px }
+
+    /* Suggestions / Chips */
+    .chips{ display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 2px }
+    .chip{
+      display:inline-flex; align-items:center; gap:.5rem;
+      background:#fff; border:1px solid var(--border);
+      border-radius:999px; padding:.6rem .9rem;
+      font-size:14px; font-weight:600; cursor:pointer;
+      box-shadow:0 1px 2px rgba(0,0,0,.04);
+      transition:transform .02s ease-in, box-shadow .12s ease;
+    }
+    .chip .emoji{ font-size:1.1rem; line-height:1 }
+    .chip .label{ line-height:1; white-space:nowrap }
+    .chip:hover{ transform:translateY(-1px); box-shadow:0 2px 6px rgba(0,0,0,.06) }
+    .chip:focus-visible{ outline:3px solid var(--focus); outline-offset:2px }
+    body.dark .chip{ background:#0b1220; color:#f8fafc; border-color:#334155 }
+
+    /* Modal (contact form) */
+    .modal-bg{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; z-index:50 }
+    .modal{ width:92%; max-width:420px; background:#fff; color:#0f172a; border-radius:16px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.2) }
+    .modal h4{ margin:0 0 10px }
+    .modal .g{ display:grid; gap:8px }
+    .modal input, .modal textarea{ width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:10px }
+    .modal .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:8px }
+    .modal .btn{ padding:10px 14px; border:0; border-radius:10px; cursor:pointer }
+    .btn-primary{ background:#111827; color:#fff }
+    .btn-ghost{ background:#fff; border:1px solid #cbd5e1 }
+
+    /* Toast */
+    .toast{
+      position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+      background:var(--toast); color:var(--toastText);
+      padding:10px 14px; border-radius:10px; box-shadow:0 6px 20px rgba(0,0,0,.18);
+      opacity:0; pointer-events:none; transition:opacity .2s ease, transform .2s ease;
+      z-index:60; font-size:14px; max-width:90vw; text-align:center;
+    }
+    .toast.show{ opacity:1; transform:translateX(-50%) translateY(-4px) }
+
+    /* Dark */
+    body.dark{ --bg:#0f172a; --bot:#1e293b; --text:#f8fafc; --border:#334155; --toast:#0b1220; --toastText:#f8fafc; }
+    body.dark .toggle{ background:#0b1220; color:#f8fafc; border-color:#334155 }
+    body.dark .modal{ background:#0b1220; color:#f8fafc }
+    body.dark .modal input, body.dark .modal textarea{ background:#0b1220; color:#f8fafc; border-color:#334155 }
+
+    /* Mobil */
+    @media (max-width:520px){
+      .wrap{ margin:8px auto; padding:8px }
+      #log{ max-height:68vh }
+      .bubble{ max-width:100% }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap" role="main">
+    <h3 role="heading" aria-level="1">
+      <span id="title">Curevia Assistant</span>
+      <div style="display:flex; gap:8px; align-items:center">
+        <select id="lang" class="toggle" aria-label="Language selector">
+          <option value="sv">Svenska</option>
+          <option value="en">English</option>
+          <option value="no">Norsk</option>
+          <option value="da">Dansk</option>
+        </select>
+        <button id="dark" class="toggle" type="button" aria-pressed="false" aria-label="Växla mörkt läge">Mörkt läge</button>
+      </div>
+    </h3>
+
+    <div id="log" aria-live="polite" aria-atomic="false">
+      <div class="bubble bot">Hej! 👋 Välkommen till Curevia. Vad vill du göra?</div>
+    </div>
+
+    <div class="row" role="form" aria-label="Chat input">
+      <input id="inp" type="text" placeholder="Skriv ett meddelande..." autocomplete="off" aria-label="Skriv ett meddelande" />
+      <button id="btn" class="primary" type="button">Skicka</button>
+    </div>
+
+    <div id="netcard" class="bubble bot" aria-live="polite">
+      <div style="font-weight:700; margin-bottom:6px" id="netTitle">Snabb kalkyl – Nettolön</div>
+      <label for="netInput" id="netLabel">Fakturerat belopp (exkl. moms):</label>
+      <input id="netInput" type="text" inputmode="decimal" style="margin:6px 0; width:100%; padding:10px; border:1px solid var(--border); border-radius:10px" placeholder="t.ex. 120 000" />
+      <div id="netOut" style="margin-top:4px"></div>
+    </div>
+
+    <div class="bubble bot" aria-live="polite" style="font-size:13px">
+      <span id="privacy">Vi anonymiserar frågor och sparar inga personuppgifter. <a href="#" target="_blank" rel="noopener">Läs mer</a>.</span>
+    </div>
+  </div>
+
+  <!-- Contact modal -->
+  <div id="modalBg" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="contactTitle">
+    <div class="modal">
+      <h4 id="contactTitle">Lämna dina uppgifter</h4>
+      <div class="g">
+        <input id="cName"  placeholder="Namn" />
+        <input id="cEmail" placeholder="E-post" />
+        <input id="cPhone" placeholder="Telefon (valfritt)" />
+        <textarea id="cMsg"  rows="4" placeholder="Kort meddelande (valfritt)"></textarea>
+      </div>
+      <div class="actions">
+        <button id="cCancel" class="btn btn-ghost" type="button">Avbryt</button>
+        <button id="cSend"   class="btn btn-primary" type="button">Skicka</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+<script>
+/* ===== Config ===== */
+const API = "/api/curevia-chat";
+const sessionId = self.crypto?.randomUUID?.() || ("sess-" + Date.now());
+
+/* ===== DOM ===== */
+const log   = document.getElementById("log");
+const inp   = document.getElementById("inp");
+const btn   = document.getElementById("btn");
+const dark  = document.getElementById("dark");
+const toastEl = document.getElementById("toast");
+const langSel = document.getElementById("lang");
+const netInput = document.getElementById("netInput");
+const netOut = document.getElementById("netOut");
+const netTitle = document.getElementById("netTitle");
+const netLabel = document.getElementById("netLabel");
+const privacy = document.getElementById("privacy");
+
+const modalBg = document.getElementById("modalBg");
+const cName   = document.getElementById("cName");
+const cEmail  = document.getElementById("cEmail");
+const cPhone  = document.getElementById("cPhone");
+const cMsg    = document.getElementById("cMsg");
+const cCancel = document.getElementById("cCancel");
+const cSend   = document.getElementById("cSend");
+
+/* ===== Toast helper ===== */
+let toastTimer=null;
+function showToast(msg="Klart!", ms=2200){
+  if (!toastEl) return;
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> toastEl.classList.remove("show"), ms);
+}
+
+/* ===== UI helpers ===== */
+function addBubble(text, who="bot"){
+  const div = document.createElement("div");
+  div.className = "bubble " + (who==="me" ? "me" : "bot");
+  if (text) div.innerText = text;
+  log.appendChild(div);
+  log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+  return div;
+}
+function addCopyIfLong(div){
+  if (!div || !div.innerText) return;
+  if (div.innerText.length <= 120) return;
+  const cp = document.createElement("div");
+  cp.className = "copy";
+  cp.textContent = "📋 Kopiera";
+  cp.onclick = () => navigator.clipboard.writeText(div.innerText);
+  div.appendChild(cp);
+}
+function typingBubble(){ const b = addBubble("…","bot"); return { destroy(){ try{ b.remove(); }catch{} } }; }
+function openNewTab(url, toastMsg){
+  try {
+    window.open(url, "_blank", "noopener,noreferrer");
+    if (toastMsg) showToast(toastMsg);
+  } catch {}
+}
+function firstUrlIn(text){ const m = String(text||"").match(/https?:\/\/[^\s)]+/i); return m ? m[0] : null; }
+
+/* Suggestions / Chips */
+let chipsBar = null;
+function clearChips(){ if(chipsBar){ try{ chipsBar.remove(); }catch{} chipsBar=null; } }
+function createChip(it){
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.type = "button";
+  b.setAttribute("aria-label", (it.text || it.label || "").trim());
+  b.innerHTML = `<span class="emoji">${it.emoji || ""}</span><span class="label">${it.text || it.label || ""}</span>`;
+  b.onclick = () => {
+    if (it.url){ openNewTab(it.url, it.toast || "Öppnade länk i ny flik"); return; }
+    const sendText = it.textSend || it.text || it.label;
+    if (sendText){ send(sendText); }
+  };
+  return b;
+}
+function renderChips(items=[]){
+  clearChips();
+  if (!items || !items.length) return;
+  chipsBar = document.createElement("div");
+  chipsBar.className = "chips";
+  for (const it of items){ chipsBar.appendChild(createChip(it)); }
+  // lägg chips under sista bot-bubblan
+  const last = [...log.querySelectorAll(".bubble.bot")].pop();
+  if (last){ last.appendChild(chipsBar); }
+  log.scrollTo({ top: log.scrollHeight, behavior:"smooth" });
+}
+
+/* ===== Dark mode ===== */
+(function initTheme(){
+  const saved = localStorage.getItem("curevia_dark");
+  if (saved === "1" || (!saved && window.matchMedia?.("(prefers-color-scheme: dark)").matches)){
+    document.body.classList.add("dark");
+    dark.setAttribute("aria-pressed","true");
+  }
+})();
+dark.onclick = () => {
+  const on = document.body.classList.toggle("dark");
+  dark.setAttribute("aria-pressed", on ? "true" : "false");
+  localStorage.setItem("curevia_dark", on ? "1" : "0");
+};
+
+/* ===== Boot ===== */
+boot();
+async function boot(){
+  // Immediate UI so page isn't blank
+  try{ await loadStrings(); }catch{}
+  addBubble(t("greet") || "Hej! 👋 Välkommen till Curevia.");
+  inp.placeholder = t("placeholder") || "Skriv ett meddelande...";
+  btn.textContent = t("send") || "Skicka";
+  dark.textContent = t("darkToggle") || dark.textContent;
+  try{ inp.focus(); }catch{}
+
+  const savedLang = localStorage.getItem("lang") || (navigator.language||"").slice(0,2);
+  if (["sv","en","no","da"].includes(savedLang)) langSel.value = savedLang;
+  applyLang();
+
+  // Fetch metadata with timeout
+  try{
+    const controller = new AbortController();
+    const to = setTimeout(()=>controller.abort(), 4000);
+    const r = await fetch(API, { headers: { "X-Session-Id": sessionId, "Accept-Language": getLang() }, signal: controller.signal });
+    clearTimeout(to);
+    const ok = (r.headers.get("content-type")||"").toLowerCase().includes("application/json");
+    if (ok){
+      const meta = await r.json();
+      if (Array.isArray(meta.topFaqs) && meta.topFaqs.length){
+        renderFaqChips(meta.topFaqs);
+      } else if (Array.isArray(meta.suggested) && meta.suggested.length){
+        renderChips(meta.suggested);
+      }
+    }
+  }catch(e){
+    // Silent fallback; UI already visible
+  }
+}
+
+/* ===== Send ===== */
+let lastUserText = "";
+btn.onclick = ()=> send(inp.value);
+inp.addEventListener("input", () => { /* keep enabled */ });
+inp.addEventListener("keydown", e => {
+  if (e.key === "Enter"){
+    e.preventDefault();
+    if (inp.value.trim()) send(inp.value);
+  }
+});
+
+async function send(text){
+  if (!text || !text.trim()) return;
+  clearChips();
+  lastUserText = text;
+  addBubble(text, "me");
+  inp.value = "";
+  btn.disabled = true;
+
+  // Snabb hantering av registreringsintention
+  if (handleRegistrationIntent(text)) return;
+
+  const bubble = addBubble("", "bot");
+  const typing = typingBubble();
+  let gotAnyToken = false;
+  let finalText = "";
+  let finalSuggestions = [];
+
+  try {
+    const r = await fetch(API + "?stream=1", {
+      method: "POST",
+      headers: {
+        "Content-Type":"application/json",
+        "X-Session-Id": sessionId,
+        "X-Lang": getLang(),
+        "Accept":"text/event-stream"
+      },
+      body: JSON.stringify({ message: text })
+    });
+
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
+
+    if (!ct.includes("text/event-stream")) {
+      typing.destroy();
+      const safe = ct.includes("application/json");
+      if (safe) {
+        const data = await r.json();
+        bubble.innerText = data.reply || "Tekniskt fel – prova igen.";
+        if (data.action === "open_url" && data.url) openNewTab(data.url, "Öppnade länk i ny flik");
+        if (Array.isArray(data.suggestions)) finalSuggestions = data.suggestions;
+      } else {
+        bubble.innerText = "Tekniskt fel – prova igen.";
+      }
+      addCopyIfLong(bubble);
+      if (finalSuggestions?.length) renderChips(finalSuggestions);
+      else smartSuggest(lastUserText, bubble.innerText);
+      return;
+    }
+
+    // === SSE
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    while (true){
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+
+        const lines = raw.split(/\r?\n/);
+        let event = "message";
+        let data  = "";
+
+        for (const line of lines){
+          if (!line) continue;
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) {
+            let payload = line.slice(5);
+            if (payload.startsWith(" ")) payload = payload.slice(1);
+            data += payload;
+          }
+        }
+        if (!data) continue;
+
+        if (event === "action") {
+          try {
+            const a = JSON.parse(data);
+            if (a?.action === "open_url" && a.url) openNewTab(a.url, "Öppnade länk i ny flik");
+            if (a?.action === "open_contact_form") openContactForm();
+          } catch {}
+          continue;
+        }
+
+        if (event === "token") {
+          if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
+          bubble.innerText += data; finalText += data;
+          log.scrollTo({ top: log.scrollHeight });
+          continue;
+        }
+
+        if (event === "final") {
+          typing.destroy();
+          try {
+            const j = JSON.parse(data);
+            if (!gotAnyToken && j.reply) { bubble.innerText = j.reply; finalText = j.reply; }
+            if (Array.isArray(j.suggestions)) finalSuggestions = j.suggestions;
+            if (j.action === "open_contact_form") openContactForm();
+          } catch {
+            if (!gotAnyToken) { bubble.innerText = data; finalText = data; }
+          }
+          continue;
+        }
+
+        // OpenAI raw stream fallback
+        try{
+          const j = JSON.parse(data);
+          const delta = j?.choices?.[0]?.delta?.content;
+          if (delta){
+            if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
+            bubble.innerText += delta; finalText += delta;
+          }
+        }catch{}
+      }
+    }
+
+    if (!gotAnyToken && !bubble.innerText) { typing.destroy(); bubble.innerText = "Inget svar – prova igen."; }
+
+    const maybeUrl = firstUrlIn(finalText);
+    if (maybeUrl && /demo|book|boka/i.test(lastUserText)) openNewTab(maybeUrl, "Öppnade bokningslänk i ny flik");
+
+    addCopyIfLong(bubble);
+    if (finalSuggestions?.length) renderChips(finalSuggestions);
+    else smartSuggest(lastUserText, bubble.innerText);
+
+  } catch(e) {
+    typing.destroy();
+    addBubble("Tekniskt fel – prova igen.");
+  }
+}
+
+/* ===== FAQ chips (Top 4) ===== */
+function renderFaqChips(list){
+  clearChips();
+  const items = (list||[]).slice(0,4).map(q=>({ emoji:"💡", text:q.q, textSend:q.q }));
+  renderChips(items);
+}
+
+/* ===== Language & i18n ===== */
+function getLang(){ return localStorage.getItem("lang") || (navigator.language||"sv").slice(0,2); }
+langSel.onchange = ()=>{ localStorage.setItem("lang", langSel.value); applyLang(); };
+
+function applyLang(){
+  const L = getLang();
+  document.documentElement.lang = L;
+  dark.textContent = t("darkToggle");
+  dark.setAttribute("aria-label", t("darkToggleAria"));
+  btn.textContent = t("send");
+  inp.placeholder = t("placeholder");
+  netTitle.textContent = t("netTitle");
+  netLabel.textContent = t("netLabel");
+  updateNet();
+}
+
+const STRINGS = { };
+async function loadStrings(){
+  const L = getLang();
+  try{
+    const r = await fetch(`/locales/${L}/common.json`);
+    const j = await r.json();
+    STRINGS[L] = j;
+  }catch{}
+}
+function t(key){ const L=getLang(); const s=STRINGS[L]||{}; const v=s[key]; return typeof v==="function"? v(): v || key; }
+
+/* ===== Net salary calculator (0.55 default by lang) ===== */
+function factor(){ const L=getLang(); return ({ sv:0.55, en:0.55, no:0.57, da:0.56 })[L] || 0.55; }
+function parseMoney(s){ s=String(s).trim(); if(!s) return NaN; const cleaned=s.replace(/[^0-9,\.\s]/g, "").replace(/\s+/g,""); const comma=cleaned.lastIndexOf(","); const dot=cleaned.lastIndexOf("."); let norm=cleaned; if (comma>dot) norm=cleaned.replace(/\./g,"").replace(",","."); else norm=cleaned.replace(/,/g,""); const n=Number(norm); return Number.isFinite(n)? n: NaN; }
+function fmt(n, L){ const opts={ sv:["sv-SE","SEK"], en:["en-GB","SEK"], no:["nb-NO","NOK"], da:["da-DK","DKK"] }[L||getLang()] || ["sv-SE","SEK"]; return new Intl.NumberFormat(opts[0],{ style:"currency", currency:opts[1], maximumFractionDigits:0 }).format(n); }
+function updateNet(){ const L=getLang(); const amt=parseMoney(netInput.value); if(!isFinite(amt)||amt<=0){ netOut.textContent=""; return; } const net=amt*factor(); const pref=(STRINGS[L]?.netOutPrefix)||"≈"; netOut.textContent = `${pref} ${fmt(net, L)}`; }
+netInput.addEventListener("input", updateNet);
+
+/* ===== Smart suggestions on the client (fallback) ===== */
+const LINKS = {
+  demo:"https://calendly.com/tim-curevia/30min",
+  regConsult:"https://curevia.ai/consultant/register",
+  regProvider:"https://curevia.ai/auth?type=signup&returnTo=/employer/register"
+};
+
+function registrationMessage(){
+  return "För att registrera dig, vänligen besök vår webbplats och följ registreringsanvisningarna. Om du behöver hjälp kan du alltid kontakta oss!";
+}
+
+function handleRegistrationIntent(userText=""){
+  const t = (userText||"").toLowerCase();
+
+  const isConsult = /(registrera|sign ?up|konto).*?(konsult|sjuksköters|läkar|nurse|doctor)/.test(t);
+  const isProvider = /(registrera|sign ?up|konto).*?(vårdgivar|klinik|mottag|provider|clinic|hospital)/.test(t);
+  const genericReg = /(registrera|sign ?up|skapa konto)/.test(t);
+
+  if (isConsult){
+    openNewTab(LINKS.regConsult, "Öppnade registreringen för vårdpersonal");
+    addBubble(registrationMessage(), "bot");
+    return true;
+  }
+  if (isProvider){
+    openNewTab(LINKS.regProvider, "Öppnade registreringen för vårdgivare");
+    addBubble(registrationMessage(), "bot");
+    return true;
+  }
+  if (genericReg){
+    renderChips([
+      { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
+      { emoji:"🏥", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
+    ]);
+    addBubble(registrationMessage(), "bot");
+    return true;
+  }
+  return false;
+}
+
+function smartSuggest(userText="", botText=""){
+  const t = (userText||"").toLowerCase();
+  const isProv = /(vårdgivar|klinik|mottag|provider|clinic|hospital)/.test(t);
+  const isCons = /(konsult|sjuksköters|läkar|nurse|doctor)/.test(t);
+
+  if (isProv) return renderChips([
+    { emoji:"👀", text:"Se hur det funkar", textSend:"Hur funkar Curevia för vårdgivare?" },
+    { emoji:"📄", text:"Pris & paket",      textSend:"Vad kostar det?" },
+    { emoji:"📅", text:"Boka demo",         url:LINKS.demo, toast:"Öppnade demo-bokning i ny flik" },
+    { emoji:"🏥", text:"Registrera – Vårdgivare", url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
+  ]);
+  if (isCons) return renderChips([
+    { emoji:"💬", text:"Vanliga frågor",    textSend:"Vanliga frågor för konsulter" },
+    { emoji:"📅", text:"Boka demo",         url:LINKS.demo, toast:"Öppnade demo-bokning i ny flik" },
+    { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" }
+  ]);
+  return renderChips([
+    { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
+    { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
+    { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
+    { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
+    { emoji:"🧷", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
+  ]);
+}
+
+/* ===== Contact modal ===== */
+function openContactForm(){ modalBg.style.display = "flex"; cName.focus(); }
+function closeContactForm(){ modalBg.style.display = "none"; }
+cCancel.onclick = closeContactForm;
+cSend.onclick = async () => {
+  const name  = cName.value.trim();
+  const email = cEmail.value.trim();
+  const phone = cPhone.value.trim();
+  const msg   = cMsg.value.trim();
+  if (!name || !email){ alert("Ange namn och e-post."); return; }
+  try{
+    const r = await fetch(API, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "X-Session-Id": sessionId },
+      body: JSON.stringify({ contact:{ name, email, phone, message: msg } })
+    });
+    const ok = r.ok;
+    closeContactForm();
+    addBubble(ok ? "Tack! Vi hör av oss inom kort. 💙" : "Kunde inte skicka just nu – prova igen.");
+  }catch{
+    closeContactForm();
+    addBubble("Kunde inte skicka just nu – prova igen.");
+  }
+};
+</script>
+</body>
+</html>
