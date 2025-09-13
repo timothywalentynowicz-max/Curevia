@@ -395,7 +395,9 @@ export default async function handler(req,res){
         }catch{}
       }
     }
-    const lang = parseHeaderLang(req) || "sv";
+    let lang = parseHeaderLang(req) || "sv";
+    // Prefer session language if present
+    try{ const sess = await getSess(sessionId); if (sess?.lang) lang = sess.lang; }catch{}
     let topFaqs = [];
     if (FEATURE_FAQ_TOP4){
       try{
@@ -417,15 +419,18 @@ export default async function handler(req,res){
         historyQs = sess.history.filter(h=>h.role==='user').slice(-2).map(h=> h.content).filter(Boolean);
       }
     }catch{}
+    // Build deduped suggestedQuestions: Top FAQ (if any) -> RAG titles -> History -> suggested defaults
+    const topFaqTexts = toSuggestedQuestions(topFaqs);
+    const suggestedDefaults = toSuggestedQuestions(suggested);
+    const combined = [...topFaqTexts, ...ragSuggestions, ...historyQs, ...suggestedDefaults];
+    const seen=new Set();
+    const dedup = combined.filter(q=>{ const key=String(q).trim().toLowerCase(); if(!key||seen.has(key)) return false; seen.add(key); return true; }).slice(0,8);
+
     return sendJSON(res, {
       ok:true, schema:SCHEMA_VERSION, route:"/api/curevia-chat",
       qaCount: qa.length,
       suggested,
-      suggestedQuestions: [
-        ...toSuggestedQuestions(topFaqs.length ? topFaqs : suggested),
-        ...ragSuggestions,
-        ...historyQs
-      ].filter(Boolean).slice(0,8),
+      suggestedQuestions: dedup,
       topFaqs,
       hasKey:Boolean(OPENAI_API_KEY), ragReady:Boolean(ragIndex),
       model:OPENAI_MODEL, streaming:true, contactWebhook:Boolean(CONTACT_WEBHOOK_URL)
@@ -561,12 +566,22 @@ export default async function handler(req,res){
   const system = `${PROMPTS[lang] || PROMPTS.sv}\n${POLICY}`;
   const sess = await getSess(sessionId);
   const history = Array.isArray(sess.history) ? sess.history : [];
+  // Compress long history into a brief summary message to reduce token usage
+  let summaryMsg = null;
+  if (history.length > 10){
+    const last = history.slice(-6);
+    const first = history.slice(0,4);
+    const keyPoints = [...first, ...last]
+      .map(h=> `${h.role==="assistant"?"A":"U"}:${(h.content||"").replace(/\s+/g,' ').slice(0,120)}`)
+      .join('\n');
+    summaryMsg = { role:'system', content:`Conversation summary (compressed):\n${keyPoints}` };
+  }
   const historyMessages = history.slice(-8).map(h=> ({ role: h.role==='assistant'?'assistant':'user', content: h.content }));
   const basePayload = {
     model: OPENAI_MODEL,
     temperature: 0.35,
     max_tokens: 240,
-    messages: [{ role:"system", content:system }, ...historyMessages, { role:"user", content:userPrompt }]
+    messages: [ { role:"system", content:system }, ...(summaryMsg?[summaryMsg]:[]), ...historyMessages, { role:"user", content:userPrompt } ]
   };
 
   const controller = new AbortController();
