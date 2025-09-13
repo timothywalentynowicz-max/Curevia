@@ -1,3 +1,4 @@
+export const config = { runtime: 'nodejs' };
 // api/contact.js
 // Skickar kontakt-mail via Resend.
 // Env i Vercel:

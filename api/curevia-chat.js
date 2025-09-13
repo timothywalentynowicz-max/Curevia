@@ -1,3 +1,4 @@
+export const config = { runtime: 'nodejs' };
 // api/curevia-chat.js — v4.0 (i18n, KB+GPT fallback, caching, Top4, votes)
 
 import { detectLang as detectLangBySignals } from "../src/i18n.mjs";

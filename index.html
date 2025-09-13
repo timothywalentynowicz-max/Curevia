@@ -1,13 +1,20 @@
 <!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="refresh" content="0; url=/chat.html" />
-    <title>Loading…</title>
-    <style>body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:24px}a{color:#2563eb}</style>
-  </head>
-  <body>
-    <p>Laddar chatten… Om du inte omdirigeras, klicka <a href="/chat.html">här</a>.</p>
-  </body>
-  </html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Curevia – Chat</title>
+  <script type="module" src="/src/main.js"></script>
+  <style>
+    :root{ --bg:#f8fafc; --bot:#eef2ff; --me:#2563eb; --text:#0f172a; --border:#cbd5e1; --focus:#94a3b8; --toast:#111827; --toastText:#fff; }
+    *{ box-sizing:border-box }
+    body{ font-family:system-ui,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--text); margin:0 }
+  </style>
+  <link rel="preload" href="/locales/sv/common.json" as="fetch" crossorigin="anonymous" />
+</head>
+<body>
+  <div id="app"></div>
+</body>
+</html>
 

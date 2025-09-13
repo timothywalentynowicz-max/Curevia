@@ -1,15 +1,5 @@
 {
-  "version": 2,
-  "public": true,
   "redirects": [
-    { "source": "/", "destination": "/chat.html", "permanent": false }
-  ],
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store" }
-      ]
-    }
+    { "source": "/chat.html", "destination": "/", "permanent": false }
   ]
 }
