@@ -239,23 +239,35 @@ dark.onclick = () => {
 /* ===== Boot ===== */
 boot();
 async function boot(){
+  // Immediate UI so page isn't blank
+  try{ await loadStrings(); }catch{}
+  addBubble(t("greet") || "Hej! 👋 Välkommen till Curevia.");
+  inp.placeholder = t("placeholder") || "Skriv ett meddelande...";
+  btn.textContent = t("send") || "Skicka";
+  dark.textContent = t("darkToggle") || dark.textContent;
+  try{ inp.focus(); }catch{}
+
+  const savedLang = localStorage.getItem("lang") || (navigator.language||"").slice(0,2);
+  if (["sv","en","no","da"].includes(savedLang)) langSel.value = savedLang;
+  applyLang();
+
+  // Fetch metadata with timeout
   try{
-    const r = await fetch(API, { headers: { "X-Session-Id": sessionId, "Accept-Language": getLang() }});
+    const controller = new AbortController();
+    const to = setTimeout(()=>controller.abort(), 4000);
+    const r = await fetch(API, { headers: { "X-Session-Id": sessionId, "Accept-Language": getLang() }, signal: controller.signal });
+    clearTimeout(to);
     const ok = (r.headers.get("content-type")||"").toLowerCase().includes("application/json");
-    if (!ok) throw new Error("meta");
-    const meta = await r.json();
-    await loadStrings();
-    addBubble(t("greet"));
-    if (Array.isArray(meta.topFaqs) && meta.topFaqs.length){
-      renderFaqChips(meta.topFaqs);
-    } else {
-      renderChips(meta.suggested || []);
+    if (ok){
+      const meta = await r.json();
+      if (Array.isArray(meta.topFaqs) && meta.topFaqs.length){
+        renderFaqChips(meta.topFaqs);
+      } else if (Array.isArray(meta.suggested) && meta.suggested.length){
+        renderChips(meta.suggested);
+      }
     }
-    const savedLang = localStorage.getItem("lang") || (navigator.language||"").slice(0,2);
-    if (["sv","en","no","da"].includes(savedLang)) langSel.value = savedLang;
-    applyLang();
-  }catch{
-    addBubble("Jag nådde inte servern just nu – prova igen om en stund 🙏");
+  }catch(e){
+    // Silent fallback; UI already visible
   }
 }
 
