@@ -503,14 +503,29 @@ export default async function handler(req,res){
       }
     }catch{}
     // Build deduped suggestedQuestions: Top FAQ (if any) -> RAG titles -> History -> suggested defaults
-    const seedTop3 = [
-      "Vad kostar det?",
-      "Jag vill boka demo",
-      "Hur mycket tjänar jag netto?"
-    ];
+    // Compute live top-3 based on queries table + upvotes/recency
+    let dynamicTop=[];
+    try{
+      const { getDb } = await import("../src/db.mjs");
+      const db = getDb();
+      const last30 = db.prepare("SELECT user_text FROM queries WHERE lang=? AND created_at > strftime('%s','now')-2592000").all(lang).map(r=> (r.user_text||'').toLowerCase());
+      const popular = [
+        { q: "Vad kostar det?",   patterns:[/kostnad|pris|avgift|priser?/] },
+        { q: "Jag vill boka demo", patterns:[/demo|boka.*möte|book.*demo|genomgång|visa plattform/] },
+        { q: "Hur mycket tjänar jag netto?", patterns:[/netto|nett[oö]l[öo]n|fakturera/] }
+      ];
+      for (const item of popular){
+        const hits = last30.filter(t=> item.patterns.some(p=> p.test(t))).length;
+        dynamicTop.push({ q:item.q, hits });
+      }
+      dynamicTop.sort((a,b)=> b.hits - a.hits);
+      dynamicTop = dynamicTop.map(x=> x.q);
+    }catch{}
+    if (!dynamicTop || dynamicTop.length===0){ dynamicTop = ["Vad kostar det?","Jag vill boka demo","Hur mycket tjänar jag netto?"]; }
+
     const topFaqTexts = toSuggestedQuestions(topFaqs);
     const suggestedDefaults = toSuggestedQuestions(suggested);
-    const combined = [...seedTop3, ...topFaqTexts, ...ragSuggestions, ...historyQs, ...suggestedDefaults];
+    const combined = [...dynamicTop, ...topFaqTexts, ...ragSuggestions, ...historyQs, ...suggestedDefaults];
     const seen=new Set();
     const dedupAll = combined.filter(q=>{ const key=String(q).trim().toLowerCase(); if(!key||seen.has(key)) return false; seen.add(key); return true; });
     const dedup = dedupAll.slice(0,3);
