@@ -549,6 +549,7 @@ export default async function handler(req,res){
       qaCount: qa.length,
       suggested,
       suggestedQuestions: dedup,
+      topSuggested: dedup,
       pinnedFAQs: PinnedFAQs,
       topFaqs,
       hasKey:Boolean(OPENAI_API_KEY), ragReady:Boolean(ragIndex),
