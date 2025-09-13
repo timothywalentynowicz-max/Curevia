@@ -334,7 +334,7 @@ async function embedText(text){
   }
   const r = await fetch(`${OPENAI_API_BASE}/embeddings`, {
     method:"POST",
-    headers:{ "Authorization":`Bearer ${OPENAI_API_KEY}", "Content-Type":"application/json" },
+    headers:{ "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type":"application/json" },
     body: JSON.stringify({ model: OPENAI_EMBED_MODEL, input: text })
   });
   const j = await r.json();
