@@ -61,6 +61,9 @@ function addCopyIfLong(div){ if(!div||!div.innerText) return; if(div.innerText.l
 function typingBubble(){ const b = addBubble('…','bot'); return { destroy(){ try{ b.remove(); }catch{} } }; }
 function shouldAutoOpen(payload, lastText){
   if (!payload || !payload.data || payload.data.action !== 'open_url' || !payload.data.url) return false;
+  const intent = String(payload.data.intent||'');
+  const allowed = intent === 'demo' || intent.startsWith('register');
+  if (!allowed) return false;
   const t = (lastText||'').toLowerCase();
   const isDemo = /(demo|visa plattformen|genomgång|boka.*möte|book.*demo)/.test(t);
   const isRegister = /(registrera|signa|skapa konto|sign ?up)/.test(t);
