@@ -326,7 +326,7 @@ async function loadRagIndex(){ if(!RAG_INDEX_URL) return null; try{ const r=awai
 
 // Embeddings helper (with test fake)
 async function embedText(text){
-  if (process.env.TEST_FAKE_OPENAI === "1"){
+  if (process.env.TEST_FAKE_OPENAI === "1" || !OPENAI_API_KEY){
     // Simple deterministic hash -> vector of length 8
     let h=0; for (let i=0;i<text.length;i++){ h=(h*31 + text.charCodeAt(i))>>>0; }
     const v = Array.from({ length:8 }, (_,i)=> ((h>>>i)&255)/255);
@@ -494,8 +494,13 @@ export default async function handler(req,res){
 
   // RAG (optional)
   const userPrompt = buildUserPrompt(message);
-  if (!FEATURE_FALLBACK_OPENAI) return res.status(404).json({ error:"Not found in knowledge base" });
-  if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
+  if (!FEATURE_FALLBACK_OPENAI || !OPENAI_API_KEY){
+    const msg = lang==="en" ? "I couldn't find an answer right now. Please try a more specific question or pick a FAQ below."
+              : lang==="no" ? "Jeg fant ikke et svar akkurat nå. Prøv et mer spesifikt spørsmål eller velg en FAQ nedenfor."
+              : lang==="da" ? "Jeg fandt ikke et svar lige nu. Prøv et mere specifikt spørgsmål eller vælg en FAQ nedenfor."
+                              : "Jag hittade tyvärr inget svar just nu. Prova mer specifikt eller välj en FAQ nedan.";
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: msg, action:null, url:null, citations:[], suggestions:suggestFor("general", lang), confidence:0.3 });
+  }
   if (!rateLimitOpenAIOk(ip)) return res.status(429).json({ error:"Too Many Requests (OpenAI)" });
 
   const system = `${PROMPTS[lang] || PROMPTS.sv}\n${POLICY}`;
