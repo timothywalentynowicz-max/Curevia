@@ -318,6 +318,8 @@ function calcNetFromParams(amountExVat, opts={}){
 // ==== Intent + CTA + Suggestions ===================================
 function detectIntent(text=""){
   const t = text.toLowerCase();
+  if (/(förslag|förbättring|feedback)/.test(t)) return "improvements";
+  if (/(faktura|fakturafråg|invoice)/.test(t)) return "invoice";
   if (/(english|engelska|switch.*english|in english)/.test(t)) return "set_lang_en";
   if (/(norsk|norska|på norsk|switch.*norwegian)/.test(t))     return "set_lang_no";
   if (/(svenska|på svenska)/.test(t))                           return "set_lang_sv";
@@ -578,10 +580,12 @@ export default async function handler(req,res){
   // contact form
   if (parsed?.contact && typeof parsed.contact==="object"){
     const c=parsed.contact; if(!c.name||!c.email) return res.status(400).json({ error:"Missing contact.name or contact.email" });
+    const category = String(c.category||"");
+    const toEmail = category==="improvements" || category==="invoice" ? (process.env.TIM_CONTACT_EMAIL||"tim@curevia.ai") : CONTACT_EMAIL;
     if (CONTACT_WEBHOOK_URL){
       try{
         const r=await fetch(CONTACT_WEBHOOK_URL,{ method:"POST", headers:{ "Content-Type":"application/json" },
-          body: JSON.stringify({ source:"curevia-chat", ip, ts:new Date().toISOString(), sessionId, contact:c }) });
+          body: JSON.stringify({ source:"curevia-chat", ip, ts:new Date().toISOString(), sessionId, contact:c, to: toEmail, category }) });
         if(!r.ok){ const txt=await r.text().catch(()=> ""); return res.status(502).json({ error:"Webhook error", details:txt }); }
       }catch{ return res.status(502).json({ error:"Webhook unreachable" });}
     } else if (RESEND_API_KEY){
@@ -591,9 +595,9 @@ export default async function handler(req,res){
           headers:{ "Authorization":`Bearer ${RESEND_API_KEY}`, "Content-Type":"application/json" },
           body: JSON.stringify({
             from: `Curevia Chat <no-reply@curevia.ai>`,
-            to: [CONTACT_EMAIL],
-            subject: `Kontakt från chatten` ,
-            text: `Ny intresseanmälan från chatten\n\nNamn: ${c.name}\nE-post: ${c.email}\nTelefon: ${c.phone||''}\nMeddelande: ${c.message||''}\n\nSession: ${sessionId||''} IP: ${ip}`
+            to: [toEmail],
+            subject: `Kontakt från chatten${category?` (${category})`:''}` ,
+            text: `Ny intresseanmälan från chatten\n\nKategori: ${category||'general'}\nNamn: ${c.name}\nE-post: ${c.email}\nTelefon: ${c.phone||''}\nMeddelande: ${c.message||''}\n\nSession: ${sessionId||''} IP: ${ip}`
           })
         });
         if(!r.ok){ const txt=await r.text().catch(()=>""); return res.status(502).json({ error:"Email send error", details:txt }); }
@@ -660,6 +664,17 @@ export default async function handler(req,res){
                : lang==="no" ? "Selvfølgelig! Legg igjen kontaktinfo så hører vi av oss snart."
                               : "Absolut! Fyll i dina kontaktuppgifter så hör vi av oss inom kort.";
     return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_CONTACT_FORM, null, 'contact'), suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.95 });
+  }
+  if (intent==="improvements" || intent==="invoice"){
+    const isImp = intent==="improvements";
+    const reply = isImp
+      ? (lang==="en"? "Leave your details and we’ll forward your improvement suggestion to Tim 💡"
+        : lang==="no"? "Legg igjen kontaktinfo, så sender vi forbedringsforslaget til Tim 💡"
+                       : "Lämna dina uppgifter så skickar vi ditt förbättringsförslag till Tim 💡")
+      : (lang==="en"? "Leave your details and we’ll route your invoice question to Tim ✉️"
+        : lang==="no"? "Legg igjen kontaktinfo, så sender vi fakturaspørsmålet til Tim ✉️"
+                       : "Lämna dina uppgifter så skickar vi din fakturafråga till Tim ✉️");
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply, data:shapeData(ACTIONS.OPEN_CONTACT_FORM, null, intent), suggestions:suggestFor("general", lang), suggestedQuestions: toSuggestedQuestions(suggestFor("general", lang)), confidence:0.95 });
   }
   if (intent==="register_provider"){
     const base = `Här kan du registrera din verksamhet: ${LINKS.regProvider}`;
