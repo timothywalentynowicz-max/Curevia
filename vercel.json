@@ -1,0 +1,5 @@
+{
+  "redirects": [
+    { "source": "/chat.html", "destination": "/", "permanent": false }
+  ]
+}

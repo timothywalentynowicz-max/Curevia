@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests with coverage
+        run: npm run test -- --coverage.enabled true --coverage.threshold 0.8
+        env:
+          TEST_FAKE_OPENAI: "1"
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+      - name: Start server
+        run: node server.mjs & sleep 2
+        env:
+          PORT: 8787
+          FEATURE_FAQ_TOP4: "1"
+          FEATURE_FALLBACK_OPENAI: "1"
+          SEARCH_SIMILARITY_THRESHOLD: "0.5"
+          TEST_FAKE_OPENAI: "1"
+      - name: E2E tests
+        run: npm run e2e
+

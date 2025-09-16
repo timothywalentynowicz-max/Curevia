@@ -1,0 +1,9 @@
+{
+  "env": { "es2022": true, "node": true, "browser": true },
+  "extends": ["standard"],
+  "parserOptions": { "sourceType": "module" },
+  "rules": {
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }]
+  },
+  "ignorePatterns": ["public/**"]
+}
