@@ -17,3 +17,11 @@ button.primary:focus-visible{ outline:3px solid var(--focus); outline-offset:2px
 .feedback{ display:flex; gap:8px; margin-top:6px }
 .thumb{ background:#fff; border:1px solid var(--border); border-radius:8px; padding:6px 10px; cursor:pointer }
 
+/* Simple modal styles */
+.modalOverlay{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; padding:20px; z-index:1000 }
+.modal{ width:min(520px, 100%); background:#fff; color:#111827; border-radius:12px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.15) }
+.modal h4{ margin:0 0 12px }
+.modal form{ display:flex; flex-direction:column; gap:8px }
+.modal input[type="text"], .modal input[type="email"], .modal input[type="tel"], .modal textarea{ width:100%; padding:10px; border:1px solid var(--border); border-radius:10px }
+.modal .actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px }
+

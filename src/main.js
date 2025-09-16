@@ -59,6 +59,40 @@ const privacy = h('div', { class:'bubble bot', style:'font-size:13px' },
 function addBubble(text, who='bot'){ const div=h('div',{ class:'bubble ' + (who==='me'?'me':'bot')}); if(text) div.innerText=text; log.appendChild(div); log.scrollTop=log.scrollHeight; return div; }
 function addCopyIfLong(div){ if(!div||!div.innerText) return; if(div.innerText.length<=120) return; const cp=h('div',{ class:'copy' },'📋 Kopiera'); cp.onclick=()=> navigator.clipboard.writeText(div.innerText); div.appendChild(cp); }
 function typingBubble(){ const b = addBubble('…','bot'); return { destroy(){ try{ b.remove(); }catch{} } }; }
+function openContactForm(category){
+  const overlay = h('div', { class:'modalOverlay', role:'dialog', 'aria-modal':'true' });
+  const modal = h('div', { class:'modal' });
+  const title = h('h4', {}, 'Lämna dina uppgifter');
+  const form = h('form', { id:'contactForm' });
+  const fName = h('input', { type:'text', name:'name', placeholder:'Namn', required:'true', 'aria-label':'Namn' });
+  const fEmail = h('input', { type:'email', name:'email', placeholder:'E-post', required:'true', 'aria-label':'E-post' });
+  const fPhone = h('input', { type:'tel', name:'phone', placeholder:'Telefon (valfritt)', 'aria-label':'Telefon (valfritt)' });
+  const fMsg = h('textarea', { name:'message', placeholder:'Meddelande (valfritt)', rows:'3', 'aria-label':'Meddelande (valfritt)' });
+  const fCat = h('input', { type:'hidden', name:'category', value: (category==='improvements'||category==='invoice')? category : 'general' });
+  const bar = h('div', { class:'actions' });
+  const cancel = h('button', { type:'button' }, 'Avbryt');
+  const sendBtn = h('button', { class:'primary', type:'submit' }, 'Skicka');
+  bar.append(cancel, sendBtn);
+  form.append(fName, fEmail, fPhone, fMsg, fCat, bar);
+  modal.append(title, form);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  const close = ()=>{ try{ overlay.remove(); }catch{} };
+  cancel.onclick = close;
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) close(); });
+  document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', onEsc); }});
+  form.onsubmit = async (e)=>{
+    e.preventDefault();
+    sendBtn.disabled = true;
+    try{
+      const payload = { contact:{ name:fName.value.trim(), email:fEmail.value.trim(), phone:fPhone.value.trim(), message:fMsg.value.trim(), category: fCat.value } };
+      const r = await fetch(API, { method:'POST', headers:{ 'Content-Type':'application/json', 'X-Session-Id': sessionId }, body: JSON.stringify(payload) });
+      if (r.ok){ close(); addBubble('Tack! Vi hör av oss inom kort.','bot'); }
+      else { const txt = await r.text().catch(()=> ''); addBubble('Kunde inte skicka just nu. Försök igen senare.','bot'); console.warn('contact error', txt); }
+    }catch(err){ addBubble('Kunde inte skicka just nu. Försök igen senare.','bot'); }
+    finally{ sendBtn.disabled = false; }
+  };
+}
 function shouldAutoOpen(payload, lastText){
   if (!payload || !payload.data || payload.data.action !== 'open_url' || !payload.data.url) return false;
   const intent = String(payload.data.intent||'');
@@ -156,6 +190,12 @@ async function send(text){
         lastFaqId = data.faqId||null;
         // Guarded auto-open (demo/register intents only)
         if (shouldAutoOpen(data, text)) { try{ window.open(data.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
+        // Open contact form when requested; set category from intent
+        if (data?.data?.action === 'open_contact_form'){
+          const intent = String(data?.data?.intent||'');
+          const cat = (intent==='improvements'||intent==='invoice') ? intent : 'general';
+          openContactForm(cat);
+        }
         if(Array.isArray(data.suggestions)) renderChips(data.suggestions);
       }
       else bubble.innerText = 'Tekniskt fel – prova igen.';
@@ -176,6 +216,12 @@ async function send(text){
             lastFaqId = j.faqId||null;
             // Guarded auto-open (demo/register intents only)
             if (shouldAutoOpen(j, text)) { try{ window.open(j.data.url, '_blank', 'noopener,noreferrer'); }catch{} }
+            // Open contact form when requested; set category from intent
+            if (j?.data?.action === 'open_contact_form'){
+              const intent = String(j?.data?.intent||'');
+              const cat = (intent==='improvements'||intent==='invoice') ? intent : 'general';
+              openContactForm(cat);
+            }
             if(Array.isArray(j.suggestions)) renderChips(j.suggestions);
           }catch{ if(!gotAny) bubble.innerText = data; }
         }
