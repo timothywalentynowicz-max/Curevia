@@ -143,10 +143,29 @@ function showToast(msg="Klart!", ms=2200){
 }
 
 /* ===== UI helpers ===== */
+function escapeHTML(s=""){
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+function linkify(text=""){
+  let out = escapeHTML(text || "");
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  out = out.replace(/(https?:\/\/[^\s)]+)(?![^<]*>)/g, (m) => {
+    return `<a href="${m}" target="_blank" rel="noopener noreferrer">${m}</a>`;
+  });
+  out = out.replace(/\n/g, "<br>");
+  return out;
+}
 function addBubble(text, who="bot"){
   const div = document.createElement("div");
   div.className = "bubble " + (who==="me" ? "me" : "bot");
-  if (text) div.innerText = text;
+  if (text) div.innerHTML = linkify(text);
   log.appendChild(div);
   log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
   return div;
@@ -279,7 +298,7 @@ async function send(text){
       const safe = ct.includes("application/json");
       if (safe) {
         const data = await r.json();
-        bubble.innerText = data.reply || "Tekniskt fel – prova igen.";
+        bubble.innerHTML = linkify(data.reply || "Tekniskt fel – prova igen.");
         if (data.action === "open_url" && data.url) openNewTab(data.url, "Öppnade länk i ny flik");
         if (Array.isArray(data.suggestions)) finalSuggestions = data.suggestions;
       } else {
@@ -363,6 +382,13 @@ async function send(text){
     }
 
     if (!gotAnyToken && !bubble.innerText) { typing.destroy(); bubble.innerText = "Inget svar – prova igen."; }
+
+    // Convert final accumulated text to clickable links
+    if (finalText) {
+      bubble.innerHTML = linkify(finalText);
+    } else if (bubble.innerText) {
+      bubble.innerHTML = linkify(bubble.innerText);
+    }
 
     const maybeUrl = firstUrlIn(finalText);
     if (maybeUrl && /demo|book|boka/i.test(lastUserText)) openNewTab(maybeUrl, "Öppnade bokningslänk i ny flik");
