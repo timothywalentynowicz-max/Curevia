@@ -102,7 +102,7 @@ function languageOf(message=""){
   if (en) return "en";
   return "sv";
 }
-const NORWAY_SUPERPROMPT = `Du är en ultra-pedagogisk rådgivare för svensk vårdpersonal som vill jobba i Norge.
+const NORWAY_SUPERPROMPT_SV = `Du är en ultra-pedagogisk rådgivare för svensk vårdpersonal som vill jobba i Norge.
 Svara alltid på svenska. Anpassa efter yrkesroll och arbetsform (onsite i Norge eller distans från Sverige). Var professionell men varm, enkel och trygg. Använd tydlig, visuellt avbockningsbar presentation.
 
 Din uppgift i varje konversation:
@@ -173,10 +173,155 @@ Viktiga länkar (använd när relevant, visa som klickbara i svaret):
 - Norsk Helsenett: https://www.nhn.no/medlemskap-i-helsenettet/nye-medlemsvilkar
 
 Ton: varm, proffsig, lösningsorienterad. Fråga kort och guidande. Avsluta alltid med Curevia-CTA enligt ovan.`;
+
+const NORWAY_SUPERPROMPT_EN = `You are a highly pedagogical advisor for Swedish healthcare professionals who want to work in Norway.
+Always answer in English. Adapt to role and work mode (onsite in Norway or remote from Sweden). Be professional yet warm, simple and reassuring. Use a clear, visually checkable format.
+
+Your task in every conversation:
+1) Map the user's situation with up to 6 short questions:
+   - Role? {doctor | nurse | assistant nurse/helsefagarbeider | psychologist}
+   - Work mode? {onsite in Norway | remote from Sweden}
+   - Planned start date?
+   - Employment? {employed by Norwegian provider | consultant/own company in Sweden}
+   - Do you have Swedish license + Good Standing from the National Board of Health and Welfare? {yes/no/in progress}
+   - Do you need to remain in Swedish social security (A1) or move to Norwegian? {A1/unclear/Norwegian}
+
+2) Always respond with this structure:
+— Overview (1 paragraph): Confirm current status, goal and start date.
+— Requirements (bullets): Authorisation/HPR, language (B2 guideline), tax (tax card, D-number, PAYE 25%/17.3%), police record (politiattest), MRSA/TB (FHI), medical records (Norwegian law), social security (A1/NAV), remote e-services where applicable.
+— Checklist (checkable): Each line must include: ⬜ step | ⏱ time | 🧭 owner | 🧾 cost | 🔗 link
+— Timeline (ASCII, weeks 1–8): Key milestones for authorisation, ID check/D-number/tax card, A1/NAV, start.
+— Documents: max 8 key documents to collect.
+— Common pitfalls + tips: 3–5 bullets.
+— Next best action: 1–3 precise steps with buttons/links.
+— Curevia CTA: Always end with exactly:
+   ✨ Want help throughout the process and to be matched to the right assignments in Norway? Sign up for free at [Curevia.ai](https://curevia.ai/consultant/register). No middlemen, full freedom.
+
+3) Always account for (include where relevant, especially in the checklist):
+- Norwegian authorisation + HPR via Helsedirektoratet/Altinn (all professions).
+- Language: employer's responsibility; guideline B2 Norwegian (Swedish often accepted, but B2 recommended).
+- Politiattest for municipal health and care services.
+- MRSA/TB per FHI guidelines (employer to require tests).
+- Records: documentation in Norwegian (Swedish/Danish may be accepted to some extent), Norwegian law applies.
+- Tax: tax card, D-number via ID check, PAYE (25%/17.3%) for foreign workers.
+- Nordic citizens do not need to register with the police; other EU/EEA >3 months must.
+- Social security: A1 certificate (Sweden/NAV) for postings.
+- Remote: authorisation still required, records per Norwegian law, possibly NHN membership (employer responsibility) for e-prescriptions/e-contact.
+- Role-specific tracks: Doctors (Certificate of Conformity + Good Standing), Nurses (authorisation via Altinn), Assistant nurse=Helsefagarbeider, Psychologist (authorisation/license via Helsedirektoratet).
+
+4) Visual elements (must render exactly like this):
+- Icons: ✅ (done), ⬜ (todo), ⏱ (time), 🧭 (owner), 🧾 (cost), 🔗 (link).
+- Timeline (ASCII), example:
+  Week 1 | [Authorisation applied]———
+  Week 2 | ——[ID check/tax card]—
+  Week 3–4| ———[A1/NAV decision]——
+  Week 5+ | —————[Start]—————
+
+5) Error handling & rollback:
+- Missing Good Standing: give exact instructions to order it from Socialstyrelsen.
+- Remote + e-prescriptions: emphasise NHN membership is the employer's responsibility.
+- Posting: confirm A1 and explain implications for Norwegian social security/tax.
+- Incomplete info: ask only the relevant follow-ups (do not ask everything again).
+
+6) FAQ (put last):
+- How long does authorisation take?
+- Can I start before I have an HPR number?
+- Do I need to know Norwegian?
+- Do I need a Norwegian bank?
+- What does Curevia do in the process?
+
+Links (use where relevant, present as clickable):
+- Authorisation/HPR (Helsedirektoratet/Altinn):
+  https://www.helsedirektoratet.no/english/authorisation-and-license-for-health-personnel
+  https://info.altinn.no/skjemaoversikt/helsedirektoratet/soknad-om-autorisasjon-og-lisens-som-helsepersonell/
+- Doctors: https://www.helsedirektoratet.no/tema/autorisasjon-og-spesialistutdanning/autorisasjon-og-lisens?path=15-2-2-lege-eueos
+- Helsefagarbeider: https://info.altinn.no/skjemaoversikt/helsedirektoratet-godkjenning-av-utenlandske-yrkeskvalifikasjoner/helsefagarbeider/
+- Language/employer responsibility: https://www.helsedirektoratet.no/tema/autorisasjon-og-spesialistutdanning/tilleggsinformasjon/arbeidsgivers-ansvar-ved-ansettelse-av-helsepersonell
+- Politiattest: https://www.helsedirektoratet.no/rundskriv/helsepersonelloven-med-kommentarer/saerskilte-regler-i-tilknytning-til-autorisasjon-krav-om-politiattest-m.v/-20a.krav-om-politiattest
+- MRSA/TB (FHI): https://www.fhi.no/publ/eldre/mrsa-veilederen/ | https://www.fhi.no/ss/tuberkulose/tuberkuloseveilederen/forekomst-og-kontroll/4.-grupper-med-plikt-til-tuberkulos/
+- Records rules: https://lovdata.no/forskrift/2019-03-01-168
+- Tax/PAYE/D-number: https://www.skatteetaten.no/en/person/foreign/are-you-intending-to-work-in-norway/tax-deduction-cards/paye/
+- A1 (NAV/Altinn): https://info.altinn.no/skjemaoversikt/arbeids--og-velferdsetaten-nav/soknad-om-a1-for-utsendte-arbeidstakeren-innen-eossveits/
+- Norsk Helsenett: https://www.nhn.no/medlemskap-i-helsenettet/nye-medlemsvilkar
+
+Tone: warm, professional, solution-oriented. Ask short guiding questions. Always end with the Curevia CTA above.`;
+
+const NORWAY_SUPERPROMPT_NO = `Du er en svært pedagogisk rådgiver for svensk helsepersonell som vil jobbe i Norge.
+Svar alltid på norsk (bokmål). Tilpass til yrkesrolle og arbeidsform (onsite i Norge eller på distanse fra Sverige). Vær profesjonell, varm og trygg. Bruk tydelig, visuelt avkryssbart oppsett.
+
+Din oppgave i hver samtale:
+1) Kartlegg brukerens situasjon med inntil 6 korte spørsmål:
+   - Yrkesrolle? {lege | sykepleier | helsefagarbeider/assistentsykepleier | psykolog}
+   - Arbeidsform? {onsite i Norge | på distanse fra Sverige}
+   - Planlagt oppstart?
+   - Ansettelsesform? {ansatt hos norsk arbeidsgiver | konsulent/eget firma i Sverige}
+   - Svensk lisens + Good Standing fra Socialstyrelsen? {ja/nei/under behandling}
+   - Skal du bli i svensk trygd (A1) eller gå over til norsk? {A1/uklart/norsk}
+
+2) Svar ALLTID med denne strukturen:
+— Oversikt (1 avsnitt): Bekreft status, mål og oppstart.
+— Kravbilde (punkter): Autorisasjon/HPR, språk (B2-veiledning), skatt (skattekort, D-nummer, PAYE 25 %/17,3 %), politiattest, MRSA/TB (FHI), journalregler (norsk rett), trygd (A1/NAV), distansekrav ved e‑tjenester.
+— Sjekkliste (avkryssbar): Hver linje: ⬜ steg | ⏱ tid | 🧭 ansvar | 🧾 kostnad | 🔗 lenke
+— Tidslinje (ASCII, uke 1–8): Milepæler for autorisasjon, ID-kontroll/D‑nummer/skattekort, A1/NAV, oppstart.
+— Dokumentliste: maks 8 viktigste dokumenter.
+— Vanlige fallgruver + tips: 3–5 punkter.
+— Next best action: 1–3 konkrete steg med knapper/lenker.
+— Curevia CTA: Avslutt alltid med:
+   ✨ Vil du ha hjelp gjennom hele prosessen og matches mot riktige oppdrag i Norge? Registrer deg gratis på [Curevia.ai](https://curevia.ai/consultant/register). Ingen mellomledd, full frihet.
+
+3) Regler (ta dem med der det passer, særlig i sjekklisten):
+- Norsk autorisasjon + HPR via Helsedirektoratet/Altinn (alle yrker).
+- Språk: arbeidsgivers ansvar; veiledning B2 norsk (svensk ofte akseptert, men B2 anbefales).
+- Politiattest for kommunale helse- og omsorgstjenester.
+- MRSA/TB etter FHI (arbeidsgiver krever prøver).
+- Journal: på norsk (svensk/dansk kan aksepteres noe), norsk lov gjelder.
+- Skatt: skattekort, D-nummer via ID-kontroll, PAYE (25 %/17,3 %) for utenlandske arbeidstakere.
+- Nordiske borgere trenger ikke melde seg hos politiet; øvrige EU/EØS >3 mnd må.
+- Trygd: A1‑attest (Sverige/NAV) ved utsending.
+- Distanse: autorisasjon kreves uansett, journalføring etter norsk rett, ev. NHN-medlemskap (arbeidsgivers ansvar) for e‑resept/e‑kontakt.
+- Yrkesvise spor: Lege (Certificate of Conformity + Good Standing), Sykepleier (autorisasjon via Altinn), Helsefagarbeider, Psykolog (autorisasjon/lisens via Helsedirektoratet).
+
+4) Visuelle elementer (må vises slik):
+- Ikoner: ✅ (klart), ⬜ (gjenstår), ⏱ (tid), 🧭 (ansvar), 🧾 (kostnad), 🔗 (lenke).
+- Tidslinje (ASCII), eksempel:
+  Uke 1 | [Autorisasjon søkt]———
+  Uke 2 | ——[ID‑kontroll/skattekort]—
+  Uke 3–4| ———[A1/NAV‑vedtak]——
+  Uke 5+ | —————[Oppstart]—————
+
+5) Feilhåndtering & rollback:
+- Mangler Good Standing: forklar nøyaktig hvordan bestille fra Socialstyrelsen.
+- Distanse + e‑resept: påpek at NHN‑medlemskap er arbeidsgivers ansvar.
+- Utsending: bekreft A1 og konsekvenser for trygd/skatt.
+- Mangelfull info: still kun relevante oppfølgingsspørsmål (ikke alt på nytt).
+
+6) FAQ (til slutt):
+- Hvor lang tid tar autorisasjon?
+- Kan jeg starte før HPR‑nummer?
+- Må jeg kunne norsk?
+- Trenger jeg norsk bank?
+- Hva gjør Curevia i prosessen?
+
+Lenker (bruk når relevant, klikkbare):
+- Autorisasjon/HPR (Helsedirektoratet/Altinn):
+  https://www.helsedirektoratet.no/english/authorisation-and-license-for-health-personnel
+  https://info.altinn.no/skjemaoversikt/helsedirektoratet/soknad-om-autorisasjon-og-lisens-som-helsepersonell/
+- Lege: https://www.helsedirektoratet.no/tema/autorisasjon-og-spesialistutdanning/autorisasjon-og-lisens?path=15-2-2-lege-eueos
+- Helsefagarbeider: https://info.altinn.no/skjemaoversikt/helsedirektoratet-godkjenning-av-utenlandske-yrkeskvalifikasjoner/helsefagarbeider/
+- Språk/arbeidsgiveransvar: https://www.helsedirektoratet.no/tema/autorisasjon-og-spesialistutdanning/tilleggsinformasjon/arbeidsgivers-ansvar-ved-ansettelse-av-helsepersonell
+- Politiattest: https://www.helsedirektoratet.no/rundskriv/helsepersonelloven-med-kommentarer/saerskilte-regler-i-tilknytning-til-autorisasjon-krav-om-politiattest-m.v/-20a.krav-om-politiattest
+- MRSA/TB (FHI): https://www.fhi.no/publ/eldre/mrsa-veilederen/ | https://www.fhi.no/ss/tuberkulose/tuberkuloseveilederen/forekomst-og-kontroll/4.-grupper-med-plikt-til-tuberkulos/
+- Journalforskrift: https://lovdata.no/forskrift/2019-03-01-168
+- Skatt/PAYE/D‑nummer: https://www.skatteetaten.no/en/person/foreign/are-you-intending-to-work-in-norway/tax-deduction-cards/paye/
+- A1 (NAV/Altinn): https://info.altinn.no/skjemaoversikt/arbeids--og-velferdsetaten-nav/soknad-om-a1-for-utsendte-arbeidstakeren-innen-eossveits/
+- Norsk Helsenett: https://www.nhn.no/medlemskap-i-helsenettet/nye-medlemsvilkar
+
+Tone: varm, profesjonell, løsningsorientert. Still korte, veiledende spørsmål. Avslutt alltid med CTA over.`;
+
 const PROMPTS = {
-  sv: NORWAY_SUPERPROMPT,
-  en: `You are the Curevia assistant (Norway guide). Always answer in Swedish and follow the structure.`,
-  no: `Du er Curevia-assistenten (Norge-guide). Svar alltid på svensk og følg strukturen.`
+  sv: NORWAY_SUPERPROMPT_SV,
+  en: NORWAY_SUPERPROMPT_EN,
+  no: NORWAY_SUPERPROMPT_NO
 };
 const POLICY = ``;
 
@@ -320,19 +465,45 @@ function shouldSuggestCTA(userText, intent){
   if (intent==="consult")  return /(uppdrag|ersättn|timlön|kom igång|registrera|hur fungerar)/i.test(t) && !/(nej|inte nu)/.test(t);
   return explicitDemo;
 }
-function polishReply(text,intent="general",addCTA=false){
+function polishReply(text,intent="general",addCTA=false,lang="sv"){
   // Do not shorten or modify; the SUPERPROMPT already formats and includes CTA
   const msg = String(text||"").trim();
-  return msg || "Jag hjälper dig steg för steg. Börja gärna med att berätta din yrkesroll och arbetsform (onsite i Norge eller distans från Sverige).";
+  if (msg) return msg;
+  if (lang === "en") return "I’ll guide you step by step. Start by telling me your role and work mode (onsite in Norway or remote from Sweden).";
+  if (lang === "no") return "Jeg veileder deg steg for steg. Start med å fortelle yrkesrolle og arbeidsform (onsite i Norge eller på distanse fra Sverige).";
+  return "Jag hjälper dig steg för steg. Börja gärna med att berätta din yrkesroll och arbetsform (onsite i Norge eller distans från Sverige).";
 }
 function suggestFor(intent, lang="sv"){
-  // Focused on Norway guidance for Swedish clinicians
+  const t = (s)=> lang==="en" ? s.en : lang==="no" ? s.no : s.sv;
+  const S = {
+    about:  { sv:"ℹ️ Om Curevia", en:"ℹ️ About Curevia", no:"ℹ️ Om Curevia" },
+    prov:   { sv:"🏥 För vårdgivare", en:"🏥 For providers", no:"🏥 For providers" },
+    cons:   { sv:"👩‍⚕️ För vårdpersonal", en:"👩‍⚕️ For clinicians", no:"👩‍⚕️ For clinicians" },
+    reg:    { sv:"✍️ Registrera dig", en:"✍️ Sign up", no:"✍️ Registrer deg" },
+    demo:   { sv:"📅 Boka demo", en:"📅 Book a demo", no:"📅 Book en demo" },
+    price:  { sv:"📄 Pris & paket", en:"📄 Pricing", no:"📄 Priser" },
+    faqC:   { sv:"💬 Vanliga frågor (konsult)", en:"💬 FAQ (consultant)", no:"💬 FAQ (konsulent)" },
+  };
+  if (intent.startsWith("provider")) return [
+    { label:t(S.demo), url:LINKS.demo },
+    { label:t(S.price), text: lang==="en" ? "What does it cost?" : (lang==="no" ? "Hva koster det?" : "Vad kostar det?") },
+    { label:t(S.reg), url:LINKS.regProvider }
+  ];
+  if (intent.startsWith("consult")) return [
+    { label:t(S.reg), url:LINKS.regConsult },
+    { label:t(S.demo), url:LINKS.demo },
+    { label:t(S.faqC), text: lang==="en"?"FAQ for consultants":(lang==="no"?"FAQ for konsulenter":"Vanliga frågor för konsulter") }
+  ];
+  if (intent==="demo_any") return [
+    { label:t(S.demo), url:LINKS.demo },
+    { label:t(S.prov), text: lang==="en"?"What do you offer providers?":(lang==="no"?"Hva tilbyr dere for leverandører?":"Vad erbjuder ni för vårdgivare?") },
+    { label:t(S.cons), text: lang==="en"?"What do you offer clinicians?":(lang==="no"?"Hva tilbyr dere for klinikere?":"Vad erbjuder ni för vårdpersonal?") }
+  ];
   return [
-    { emoji:"👩‍⚕️", label:"Yrkesroll", text:"Jag är sjuksköterska" },
-    { emoji:"📍", label:"Onsite i Norge", text:"Jag vill jobba onsite i Norge" },
-    { emoji:"🌐", label:"Distans från Sverige", text:"Jag vill jobba på distans från Sverige" },
-    { emoji:"🗓️", label:"Startdatum", text:"Planerat startdatum: 1 december" },
-    { emoji:"✍️", label:"Registrera dig", url:LINKS.regConsult }
+    { label:t(S.about), text: lang==="en"?"Tell me about Curevia":(lang==="no"?"Fortell om Curevia":"Berätta mer om Curevia") },
+    { label:t(S.prov),  text: lang==="en"?"What do you offer providers?":(lang==="no"?"Hva tilbyr dere for leverandører?":"Vad erbjuder ni för vårdgivare?") },
+    { label:t(S.cons),  text: lang==="en"?"What do you offer clinicians?":(lang==="no"?"Hva tilbyr dere for klinikere?":"Vad erbjuder ni för vårdpersonal?") },
+    { label:t(S.reg),   text: lang==="en"?"I want to sign up":(lang==="no"?"Jeg vil registrere meg":"Jag vill registrera mig") },
   ];
 }
 
@@ -341,24 +512,24 @@ function parseNorwaySlots(msg=""){
   const t = msg.toLowerCase();
   const out = {};
   // Role
-  if (/\bläkare|doktor\b/.test(t)) out.no_role = "läkare";
-  else if (/sjukskötersk/.test(t)) out.no_role = "sjuksköterska";
-  else if (/underskötersk|helsefagarbeider|vårdbiträde/.test(t)) out.no_role = "undersköterska/helsefagarbeider";
-  else if (/psykolog/.test(t)) out.no_role = "psykolog";
+  if (/\bläkare|doktor\b/.test(t) || /\bdoctor|physician\b/.test(t) || /\blege\b/.test(t)) out.no_role = "läkare";
+  else if (/sjukskötersk/.test(t) || /\bnurse\b/.test(t) || /sykepleier/.test(t)) out.no_role = "sjuksköterska";
+  else if (/underskötersk|helsefagarbeider|vårdbiträde/.test(t) || /assistant nurse|auxiliary/.test(t)) out.no_role = "undersköterska/helsefagarbeider";
+  else if (/psykolog/.test(t) || /psycholog/.test(t) || /psykolog\b/.test(t)) out.no_role = "psykolog";
   // Work mode
-  if (/distans|remote|hemifr[aå]n|fr[aå]n sverige/.test(t)) out.no_mode = "distans från Sverige";
-  if (/onsite|p[aå] plats|i norge|flytta till norge/.test(t)) out.no_mode = "onsite i Norge";
+  if (/distans|remote|hemifr[aå]n|fr[aå]n sverige|from sweden/.test(t) || /på distanse|distanse/.test(t)) out.no_mode = "distans från Sverige";
+  if (/onsite|p[aå] plats|i norge|flytta till norge|on site/.test(t)) out.no_mode = "onsite i Norge";
   // Employment
-  if (/anst[aä]lld|norsk arbetsgivare|fast tj[aä]nst/.test(t)) out.no_employment = "anställd hos norsk vårdgivare";
-  if (/konsult|egen firma|eget bolag|enskild firma|ab\b/.test(t)) out.no_employment = "konsult/egen firma i Sverige";
+  if (/anst[aä]lld|norsk arbetsgivare|fast tj[aä]nst|employe?d|ansatt/.test(t)) out.no_employment = "anställd hos norsk vårdgivare";
+  if (/konsult|egen firma|eget bolag|enskild firma|ab\b|consultant|own company|contractor/.test(t)) out.no_employment = "konsult/egen firma i Sverige";
   // License + Good Standing
-  if (/(good\s*standing|intyg).*?(ja|klar|finns)/.test(t) || /(legitimation).*?(ja|har)/.test(t)) out.no_license = "ja";
-  else if (/(good\s*standing|legitimation).*?(nej|saknas|inte)/.test(t)) out.no_license = "nej";
-  else if (/(good\s*standing|legitimation).*?(p[aå]g[aå]r|under handl[aä]ggning)/.test(t)) out.no_license = "pågår";
+  if (/(good\s*standing|intyg).*?(ja|klar|finns)/.test(t) || /(legitimation|license).*?(ja|har|have)/.test(t) || /(godkjent|autorisasjon).*?(har|ja)/.test(t)) out.no_license = "ja";
+  else if (/(good\s*standing|legitimation|license).*?(nej|saknas|ikke|no|not)/.test(t)) out.no_license = "nej";
+  else if (/(good\s*standing|legitimation|license).*?(p[aå]g[aå]r|under handl[aä]ggning|in progress|processing|under behandling)/.test(t)) out.no_license = "pågår";
   // Social security
   if (/\bA1\b/.test(t)) out.no_social = "A1";
-  else if (/norsk trygd|nav|folketrygd/.test(t)) out.no_social = "norsk";
-  else if (/oklart|os[aä]kert|vet inte/.test(t)) out.no_social = "oklart";
+  else if (/norsk trygd|nav|folketrygd|norwegian social/.test(t)) out.no_social = "norsk";
+  else if (/oklart|os[aä]kert|vet inte|unclear|unsure|uklart/.test(t)) out.no_social = "oklart";
   // Start date (very lenient capture)
   const m = t.match(/(start|fr\s*o\s*m|fr[aå]n|börjar|startdatum)[:\s-]*([^\n]{3,40})/);
   if (m && m[2]) out.no_start = m[2].trim();
@@ -390,8 +561,18 @@ let ragIndex=null;
 async function loadRagIndex(){ if(!RAG_INDEX_URL) return null; try{ const r=await fetch(RAG_INDEX_URL,{cache:"no-store"}); if(r.ok){ ragIndex=await r.json(); } }catch{} return ragIndex; }
 async function embedText(){ return { }; } // omitted when no RAG
 async function ragRetrieve(){ return { passages:[], citations:[] }; }
-function buildUserPrompt(message, sess){
+function buildUserPrompt(message, sess, lang="sv"){
   const { known, missing } = summarizeNorwaySlots(sess||{});
+  if (lang === "en"){
+    const missingLine = missing.length ? `Missing: ${missing.join(", ")}. Ask only the relevant, short follow-ups (max 6 in total).` : `All information present. Generate the full guidance using the structure.`;
+    const lead = `Known info: ${known}. ${missingLine}`;
+    return `${lead}\n\nUser message:\n${message}`;
+  }
+  if (lang === "no"){
+    const missingLine = missing.length ? `Mangler: ${missing.join(", ")}. Still kun relevante, korte oppfølgingsspørsmål (maks 6 totalt).` : `All informasjon finnes. Generer full veiledning etter strukturen.`;
+    const lead = `Kjent informasjon: ${known}. ${missingLine}`;
+    return `${lead}\n\nBrukers melding:\n${message}`;
+  }
   const missingLine = missing.length ? `Saknas: ${missing.join(", ")}. Ställ bara relevanta, korta följdfrågor (max 6 totalt).` : `All info finns. Generera fullständig vägledning enligt strukturen.`;
   const lead = `Känd information: ${known}. ${missingLine}`;
   return `${lead}\n\nAnvändarens senaste meddelande:\n${message}`;
@@ -454,7 +635,21 @@ export default async function handler(req,res){
   message = dePrompt(message).slice(0, MAX_INPUT_LEN);
 
   // language
-  let lang = "sv"; // Always Swedish for Norway guidance
+  const stored   = sessionId ? (await getSess(sessionId)).lang : null;
+  const headerL  = parseHeaderLang(req);
+  const askedFor = detectLangFromText(message);
+  let lang = stored || headerL || languageOf(message);
+
+  const intent0 = detectIntent(message);
+  if (intent0==="set_lang_en" || intent0==="set_lang_no" || intent0==="set_lang_sv"){
+    lang = intent0==="set_lang_en" ? "en" : intent0==="set_lang_no" ? "no" : "sv";
+    if (sessionId) await patchSess(sessionId,{ lang });
+    const confirm = lang==="en" ? "Switched to English 🇬🇧"
+                  : lang==="no" ? "Byttet til norsk 🇳🇴"
+                                 : "Bytte till svenska 🇸🇪";
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply:confirm, action:null, url:null, citations:[], suggestions:suggestFor("general", lang), confidence:0.99 });
+  }
+  if (askedFor && askedFor!==lang){ lang=askedFor; if(sessionId) await patchSess(sessionId,{ lang }); }
   if (sessionId) await patchSess(sessionId,{ lang });
 
   // Parse and store Norway-specific slots
@@ -489,13 +684,35 @@ export default async function handler(req,res){
                               : "Absolut! Fyll i dina kontaktuppgifter så hör vi av oss inom kort.";
     return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:ACTIONS.OPEN_CONTACT_FORM, url:null, citations:[], suggestions:suggestFor("general", lang), confidence:0.95 });
   }
-  // Disable other URL-opening intents to keep focus on guidance flow
+  if (intent==="register_provider"){
+    const base = `Här kan du registrera din verksamhet: ${LINKS.regProvider}`;
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: await translateIfNeeded(base, lang), action:ACTIONS.OPEN_URL, url:LINKS.regProvider, citations:[], suggestions:suggestFor("provider", lang), confidence:0.95 });
+  }
+  if (intent==="register_consult"){
+    const base = lang==="en" ? `Great! Create your consultant profile here: ${LINKS.regConsult}`
+               : lang==="no" ? `Supert! Registrer din konsulentprofil her: ${LINKS.regConsult}`
+                              : `Toppen! Registrera din konsultprofil här: ${LINKS.regConsult}`;
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: base, action:ACTIONS.OPEN_URL, url:LINKS.regConsult, citations:[], suggestions:suggestFor("consult", lang), confidence:0.95 });
+  }
+  if (intent==="provider_demo" || intent==="consult_demo" || intent==="demo_any"){
+    const lead = lang==='en' ? "Great — let’s book a short demo."
+               : lang==='no' ? "Supert – la oss booke en kort demo."
+                              : "Toppen – låt oss boka en kort demo.";
+    const reply = `${lead} ${LINKS.demo}`;
+    const bucket = intent==="consult_demo" ? "consult" : "provider";
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:ACTIONS.OPEN_URL, url:LINKS.demo, citations:[], suggestions:suggestFor(bucket, lang), confidence:0.98 });
+  }
 
   // QA
-  // Skip generic QA to allow the SUPERPROMPT to answer comprehensively
+  const qa = await loadQuickAnswers();
+  const hit = qa.find(q=>q.pattern.test(message));
+  if (hit){
+    const reply = await translateIfNeeded(hit.reply, lang);
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:null, url:null, citations:[], suggestions:suggestFor("general", lang), confidence:0.9 });
+  }
 
   // RAG (optional)
-  const userPrompt = buildUserPrompt(message, sess);
+  const userPrompt = buildUserPrompt(message, sess, lang);
   if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
 
   const system = `${PROMPTS[lang] || PROMPTS.sv}`;
@@ -539,7 +756,7 @@ export default async function handler(req,res){
         }
       }
       clearTimeout(to);
-      const reply = polishReply(full.trim(), intent, shouldSuggestCTA(message,intent));
+      const reply = polishReply(full.trim(), intent, shouldSuggestCTA(message,intent), lang);
       sseSend(res,"final",{ version:SCHEMA_VERSION, reply, action:null, url:null, citations:[], suggestions:suggestFor(intent, lang), confidence:0.86 });
       res.end(); return;
 
@@ -554,7 +771,7 @@ export default async function handler(req,res){
       if (!r.ok) return res.status(502).json({ error:data || "Upstream error" });
 
       const raw = (data?.choices?.[0]?.message?.content || "").trim();
-      const reply = polishReply(raw, intent, shouldSuggestCTA(message,intent));
+      const reply = polishReply(raw, intent, shouldSuggestCTA(message,intent), lang);
       return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:null, url:null, citations:[], suggestions:suggestFor(intent, lang), confidence:0.88 });
     }
   }catch(e){
