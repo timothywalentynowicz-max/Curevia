@@ -323,7 +323,16 @@ const PROMPTS = {
   en: NORWAY_SUPERPROMPT_EN,
   no: NORWAY_SUPERPROMPT_NO
 };
-const POLICY = ``;
+const POLICY = `• Föreslå “Boka demo” bara när användaren ber om det.
+• Vid “kontakta mig”: erbjud kontaktformulär och säg att vi hör av oss inom kort.
+• Dela aldrig person- eller journaluppgifter; be om säker kanal i sådana fall.
+• Ton: varm, proffsig och lösningsorienterad. Max 2–3 meningar per svar.`;
+
+const BASIC_PROMPTS = {
+  sv: `Du är Curevia-boten. Svara kort, vänligt och konkret på svenska.`,
+  en: `You are the Curevia assistant. Reply briefly, warmly, and clearly in English.`,
+  no: `Du er Curevia-boten. Svar kort, vennlig og konkret på norsk bokmål.`
+};
 
 // ==== Translate helper ============================================
 async function translateIfNeeded(text, lang){
@@ -538,6 +547,16 @@ function parseNorwaySlots(msg=""){
   return out;
 }
 
+// Detect whether to use Norway guidance superprompt
+function isNorwayGuidanceIntent(message="", sess={}){
+  const t = (message||"").toLowerCase();
+  const hard = /(norge|norway|helsedirektoratet|altinn|hpr|autorisa|autorisasjon|a1\b|nav\b|d-?nummer|skattekort|paye|politiattest|mrsa|tuberkulos|tuberkulose|norsk helsenett|nhn)/.test(t);
+  const role = /(sjuksköters|läkar|læk|doctor|nurse|helsefagarbeider|psykolog|psycholog)/.test(t);
+  const work = /(jobba|arbete|oppdrag|assignment|onsite|på plats|on site|distans|remote|på distanse)/.test(t);
+  const sessHas = sess?.no_role || sess?.no_mode || sess?.no_employment || sess?.no_license || sess?.no_start || sess?.no_social;
+  return Boolean(hard || (role && work) || sessHas);
+}
+
 function summarizeNorwaySlots(sess={}){
   const role = sess.no_role || "?";
   const mode = sess.no_mode || "?";
@@ -711,15 +730,18 @@ export default async function handler(req,res){
     return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:null, url:null, citations:[], suggestions:suggestFor("general", lang), confidence:0.9 });
   }
 
-  // RAG (optional)
-  const userPrompt = buildUserPrompt(message, sess, lang);
+  // RAG / LLM call
+  const norwayMode = isNorwayGuidanceIntent(message, sess);
+  const userPrompt = norwayMode ? buildUserPrompt(message, sess, lang) : message;
   if (!OPENAI_API_KEY) return res.status(500).json({ error:"Missing OPENAI_API_KEY" });
 
-  const system = `${PROMPTS[lang] || PROMPTS.sv}`;
+  const system = norwayMode
+    ? `${PROMPTS[lang] || PROMPTS.sv}`
+    : `${BASIC_PROMPTS[lang] || BASIC_PROMPTS.sv}\n${POLICY}`;
   const basePayload = {
     model: OPENAI_MODEL,
-    temperature: 0.25,
-    max_tokens: 1200,
+    temperature: norwayMode ? 0.25 : 0.35,
+    max_tokens: norwayMode ? 1200 : 320,
     messages: [{ role:"system", content:system }, { role:"user", content:userPrompt }]
   };
 
