@@ -470,9 +470,10 @@ function shouldSuggestCTA(userText, intent){
   const t = (userText||"").toLowerCase();
   const explicitDemo = /(demo|visa plattformen|genomgång|boka.*möte)/.test(t);
   if (intent==="provider_demo"||intent==="consult_demo") return true;
-  if (intent==="provider") return /(pris|avgift|gdpr|integration|onboard|kom igång|hur fungerar|testa)/i.test(t) && explicitDemo;
-  if (intent==="consult")  return /(uppdrag|ersättn|timlön|kom igång|registrera|hur fungerar)/i.test(t) && !/(nej|inte nu)/.test(t);
-  return explicitDemo;
+  // Make CTAs conservative: only add when user explicitly asks for demo or registration
+  if (intent==="provider") return explicitDemo;
+  if (intent==="consult")  return /(registrera|sign\s?up|create account)/i.test(t);
+  return false;
 }
 function polishReply(text,intent="general",addCTA=false,lang="sv"){
   // Do not shorten or modify; the SUPERPROMPT already formats and includes CTA
@@ -512,7 +513,6 @@ function suggestFor(intent, lang="sv"){
     { label:t(S.about), text: lang==="en"?"Tell me about Curevia":(lang==="no"?"Fortell om Curevia":"Berätta mer om Curevia") },
     { label:t(S.prov),  text: lang==="en"?"What do you offer providers?":(lang==="no"?"Hva tilbyr dere for leverandører?":"Vad erbjuder ni för vårdgivare?") },
     { label:t(S.cons),  text: lang==="en"?"What do you offer clinicians?":(lang==="no"?"Hva tilbyr dere for klinikere?":"Vad erbjuder ni för vårdpersonal?") },
-    { label:t(S.reg),   text: lang==="en"?"I want to sign up":(lang==="no"?"Jeg vil registrere meg":"Jag vill registrera mig") },
   ];
 }
 
@@ -704,22 +704,23 @@ export default async function handler(req,res){
     return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:ACTIONS.OPEN_CONTACT_FORM, url:null, citations:[], suggestions:suggestFor("general", lang), confidence:0.95 });
   }
   if (intent==="register_provider"){
-    const base = `Här kan du registrera din verksamhet: ${LINKS.regProvider}`;
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply: await translateIfNeeded(base, lang), action:ACTIONS.OPEN_URL, url:LINKS.regProvider, citations:[], suggestions:suggestFor("provider", lang), confidence:0.95 });
+    const base = lang==="en" ? "I can share the provider sign-up link if you want it."
+               : lang==="no" ? "Jeg kan dele registreringslenken for leverandører om du vil."
+                              : "Jag kan dela länken för att registrera vårdgivare om du vill.";
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: base, action:null, url:null, citations:[], suggestions:suggestFor("provider", lang), confidence:0.9 });
   }
   if (intent==="register_consult"){
-    const base = lang==="en" ? `Great! Create your consultant profile here: ${LINKS.regConsult}`
-               : lang==="no" ? `Supert! Registrer din konsulentprofil her: ${LINKS.regConsult}`
-                              : `Toppen! Registrera din konsultprofil här: ${LINKS.regConsult}`;
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply: base, action:ACTIONS.OPEN_URL, url:LINKS.regConsult, citations:[], suggestions:suggestFor("consult", lang), confidence:0.95 });
+    // Respond with information first; provide link only if explicitly asked
+    const base = lang==="en" ? "You can create your consultant profile when you're ready. Would you like the link?"
+               : lang==="no" ? "Du kan registrere konsulentprofil når du er klar. Vil du ha lenken?"
+                              : "Du kan skapa din konsultprofil när du är redo. Vill du ha länken?";
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: base, action:null, url:null, citations:[], suggestions:suggestFor("consult", lang), confidence:0.9 });
   }
   if (intent==="provider_demo" || intent==="consult_demo" || intent==="demo_any"){
-    const lead = lang==='en' ? "Great — let’s book a short demo."
-               : lang==='no' ? "Supert – la oss booke en kort demo."
-                              : "Toppen – låt oss boka en kort demo.";
-    const reply = `${lead} ${LINKS.demo}`;
-    const bucket = intent==="consult_demo" ? "consult" : "provider";
-    return sendJSON(res,{ version:SCHEMA_VERSION, reply, action:ACTIONS.OPEN_URL, url:LINKS.demo, citations:[], suggestions:suggestFor(bucket, lang), confidence:0.98 });
+    const lead = lang==='en' ? "Would you like a short demo? I can share the booking link."
+               : lang==='no' ? "Vil du ha en kort demo? Jeg kan sende lenken."
+                              : "Vill du ha en kort demo? Jag kan skicka bokningslänken.";
+    return sendJSON(res,{ version:SCHEMA_VERSION, reply: lead, action:null, url:null, citations:[], suggestions:suggestFor(intent.startsWith('consult')? 'consult' : 'provider', lang), confidence:0.9 });
   }
 
   // QA
