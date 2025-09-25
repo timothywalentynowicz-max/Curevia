@@ -69,7 +69,6 @@
     body.dark .modal{ background:#0b1220; color:#f8fafc }
     body.dark .modal input, body.dark .modal textarea{ background:#0b1220; color:#f8fafc; border-color:#334155 }
 
-    /* Mobil */
     @media (max-width:520px){
       .wrap{ margin:8px auto; padding:8px }
       #log{ max-height:68vh }
@@ -113,11 +112,156 @@
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
-/* ===== Config ===== */
-const API = "/api/curevia-chat";
+/* =========================================================
+   CONFIG & CONSTANTS
+========================================================= */
+const API = "/api/curevia-chat"; // server-fallback (GPT-5)
 const sessionId = self.crypto?.randomUUID?.() || ("sess-" + Date.now());
+const LINKS = {
+  demo:"https://calendly.com/tim-curevia/30min",
+  regConsult:"https://curevia.ai/consultant/register",
+  regProvider:"https://curevia.ai/auth?type=signup&returnTo=/employer/register"
+};
 
-/* ===== DOM ===== */
+// Kalkyl – defaults (kan ersättas av server/env via /api om du vill)
+const DEFAULTS = {
+  platformFeePct: 0.05,   // 5%
+  agPct: 0.3142,          // 31,42% arbetsgivaravgift
+  taxPct: 0.32,           // 32% schablon
+  vacationPct: 0.12       // 12% semesterpåslag (kan sättas 0)
+};
+
+/* =========================================================
+   COMPREHENSIVE FAQ (robust på klientsidan)
+   OBS: lägg till nya frågor längst ner – ta aldrig bort.
+========================================================= */
+const CureviaFAQs = [
+  // OM CUREVIA
+  { q:"Vilket företag står bakom Curevia?", a:"Curevia drivs av Nenetka AB – en svensk plattform som matchar vårdpersonal med uppdrag. Enkelt, tryggt och utan krångel." },
+  { q:"Vad är Curevia?", a:"En digital marknadsplats för vården. Vårdpersonal hittar uppdrag och vårdgivare hittar kompetens – helt digitalt." },
+  { q:"Är Curevia ett bemanningsföretag?", a:"Vi är en plattform/marknadsplats snarare än ett traditionellt bemanningsbolag, vilket ger transparens och snabbare processer." },
+  { q:"Vilka kan använda Curevia?", a:"Legitimerad vårdpersonal och vårdgivare/kliniker i behov av bemanning." },
+  { q:"Var finns ni?", a:"Vi är baserade i Sverige och expanderar stegvis. Fråga oss om din region." },
+  { q:"Är Curevia godkänt av myndigheter?", a:"Vi följer gällande regelverk och GDPR, och verifierar legitimation innan uppdrag." },
+  { q:"Tar ni provision från vårdpersonalens lön?", a:"Vi tar en transparent plattformsavgift på fakturabeloppet exkl. moms enligt avtal – ersättningen syns tydligt i kalkylen." },
+  { q:"Vad skiljer er från klassiska bemanningsbolag?", a:"Digitalt flöde, mer valfrihet och snabb matchning. Mindre friktion, mer kontroll." },
+  { q:"Har ni kollektivavtal?", a:"Villkor beror på uppdragsform. Be oss om underlag för just din situation." },
+  { q:"Jobbar ni bara i Sverige?", a:"Primärt i Sverige just nu, men vi bygger broar mellan europeiska länder stegvis." },
+
+  // REGISTRERING & PROFIL
+  { q:"Hur registrerar jag mig som konsult?", a:"Skapa konto, fyll i profil och ladda upp legitimation/intyg. Boten guidar dig steg för steg." },
+  { q:"Hur registrerar sig en vårdgivare?", a:"Skapa konto, lägg in behov (kompetens, datum, villkor) och signera digitalt när matchen är klar." },
+  { q:"Vilka dokument behöver jag som konsult?", a:"Legitimation, CV, eventuella intyg och referenser. Ladda upp i din profil så kan vi verifiera." },
+  { q:"Hur verifieras min legitimation?", a:"Vi kontrollerar legitimation mot tillgängliga register och begär kompletteringar vid behov." },
+  { q:"Kan jag pausa min profil?", a:"Ja, du kan dölja eller pausa din profil när du inte är tillgänglig." },
+  { q:"Hur uppdaterar jag mina uppgifter?", a:"Gå till Profil → Redigera. Ändringar slår igenom direkt efter sparning." },
+
+  // FÖR KONSULTER – ARBETSSÄTT
+  { q:"Hur funkar det att jobba via Curevia?", a:"Skapa profil, hitta uppdrag, signera digitalt och rapportera tid. Vi sköter administration och utbetalning." },
+  { q:"Måste jag ha ett eget bolag?", a:"Nej. Du kan få lön utan bolag via oss – eller fakturera från eget AB om du föredrar det." },
+  { q:"Kan jag välja uppdrag fritt?", a:"Ja, du väljer plats, tider och villkor inom ramen för uppdraget." },
+  { q:"Kan jag arbeta deltid?", a:"Absolut. Du styr själv din tillgänglighet och omfattning." },
+  { q:"Erbjuder ni distansuppdrag?", a:"Ja, när vårdgivaren tillåter det. Filtrera på distans i uppdragslistan." },
+  { q:"Hur hittar jag nya uppdrag?", a:"I din dashboard – och via personliga rekommendationer utifrån din profil." },
+  { q:"Hur rapporterar jag tid?", a:"Direkt i plattformen. Signera och skicka för godkännande." },
+  { q:"Hur snabbt får jag feedback på en ansökan?", a:"Ofta inom 24–72 timmar. Du får notiser i appen." },
+
+  // EKONOMI & ERSÄTTNING – KONSULT
+  { q:"Hur mycket får jag ut i nettolön om jag fakturerar X kr?", a:"Ange fakturabelopp exkl. moms så räknar vi brutto, skatt och nettolön direkt – med tydliga mellanled." },
+  { q:"Vilken plattformsavgift tar ni?", a:"Enligt avtal, t.ex. en procentsats på fakturabeloppet exkl. moms. Den visas öppet i kalkylen." },
+  { q:"När får jag betalt?", a:"Vanligtvis inom 5–10 bankdagar efter godkänd tidrapport/faktura. Tider kan variera per uppdrag." },
+  { q:"Får jag tjänstepension?", a:"Beror på uppdragsform. Fråga oss så sätter vi upp rätt lösning." },
+  { q:"Hur funkar semesterersättning?", a:"Vi kan lägga på t.ex. 12 % enligt valt upplägg, eller redovisa separat – du väljer." },
+  { q:"Hur funkar skatten?", a:"Vid lön via oss drar vi preliminär skatt enligt tabell/schablon. Med eget AB hanterar du skatt i bolaget." },
+  { q:"Vad är skillnaden mellan lön via Curevia och fakturering via AB?", a:"Med lön sköter vi arbetsgivaransvar, skatter och utbetalning. Med AB fakturerar du och sköter ekonomi själv." },
+  { q:"Kan jag få milersättning och traktamente?", a:"Ja, enligt Skatteverkets regler och uppdragsavtal. Rapportera i tidrapporten så hanterar vi det korrekt." },
+  { q:"Kan jag se exempel på lönebesked?", a:"Ja, vi kan visa en exempel-PDF så du ser hur allt redovisas." },
+  { q:"Hur hanteras OB och ersättning för helg/kväll?", a:"Enligt uppdragsavtal. Vi visar alltid ersättningsnivåerna tydligt innan du accepterar." },
+  { q:"Kan jag få förskott?", a:"I vissa fall efter överenskommelse. Fråga support så hjälper vi dig." },
+
+  // TRYGGHET & JURIDIK
+  { q:"Vem står för försäkring?", a:"Försäkring tillhandahålls av vårdgivaren enligt uppdragets villkor. Be oss om intyg för just ditt uppdrag." },
+  { q:"Vem är arbetsgivare?", a:"Vid lön via Curevia är vi arbetsgivare. Fakturerar du via eget AB är uppdraget B2B." },
+  { q:"Är mina personuppgifter säkra?", a:"Ja, vi följer GDPR och lagrar data säkert inom EU. Du kan begära utdrag eller radering när som helst." },
+  { q:"Hur hanterar ni känslig information?", a:"Vi minimerar insamling, krypterar där det krävs och delar aldrig utan laglig grund." },
+  { q:"Har jag rätt till sjuklön?", a:"Beror på uppdragsform och avtal. Vi förklarar gärna vad som gäller i ditt specifika uppdrag." },
+  { q:"Vad händer om vårdgivaren betalar sent?", a:"Vi hanterar påminnelser enligt avtal. Vid lön via oss påverkas normalt inte din utbetalning." },
+
+  // VÅRDGIVARE – BOKNING & AVTAL
+  { q:"Hur lägger vi en förfrågan som vårdgivare?", a:"Skapa konto, ange kompetens, datum, omfattning och villkor. Vi matchar snabbt och ni signerar digitalt." },
+  { q:"Vilka kompetenser kan vi boka?", a:"Läkare, sjuksköterskor (grund/specialist), undersköterskor m.fl. Fråga om nischade roller." },
+  { q:"Hur snabbt kan ni leverera personal?", a:"Ofta inom 24–72 timmar för kortare vikariat. Längre uppdrag planeras i god tid." },
+  { q:"Kan vi skriva ramavtal?", a:"Ja, för bättre priser, SLA och tydlig uppföljning." },
+  { q:"Hur fungerar prissättning?", a:"Tim- eller dygnspriser baseras på kompetens, plats och tider. Vi lämnar offert med tydlig kostnadsbild." },
+  { q:"Kan vi följa uppdrag i realtid?", a:"Ja, i er dashboard ser ni status, tidrapporter och KPI:er." },
+  { q:"Hur sker fakturering?", a:"Digital tidrapportering och samlad faktura enligt överenskommet intervall." },
+  { q:"Gör ni bakgrundskontroller?", a:"Ja, legitimation och referenser kontrolleras innan start." },
+  { q:"Kan vi behöva teckna extra försäkring?", a:"Vårdgivaren ansvarar för nödvändiga försäkringar och arbetsmiljö enligt lag och avtal." },
+
+  // PRAKTISKT & APP
+  { q:"Hur loggar jag in?", a:"Med e-post/telefon och engångskod eller BankID om aktiverat." },
+  { q:"Jag har glömt mitt lösenord, vad gör jag?", a:"Klicka på ”Glömt?” så skickar vi en återställningslänk eller engångskod." },
+  { q:"Har ni en mobilapp?", a:"Webben är mobilanpassad idag. Native app är på väg." },
+  { q:"Kan jag få notiser om nya uppdrag?", a:"Ja, aktivera notiser och bevakningar i din profil." },
+  { q:"Kan jag exportera min historik?", a:"Ja, exportera som PDF/CSV under Historik." },
+  { q:"Stödjer ni flera språk?", a:"Ja, svenska, norska, engelska och danska. Fler språk kan tillkomma." },
+  { q:"Kan jag bjuda in en kollega?", a:"Ja, dela din inbjudningslänk – båda kan få bonus enligt kampanjvillkor." },
+
+  // DISTANS & ARBETSSÄTT
+  { q:"Hur funkar distansuppdrag praktiskt?", a:"När vårdgivaren tillåter det sker arbetet digitalt enligt deras processer och system." },
+  { q:"Vilken utrustning behöver jag för distans?", a:"Säker uppkoppling, kamera/mikrofon och tillgång till vårdgivarens system enligt instruktion." },
+  { q:"Kan jag kombinera distans och på plats?", a:"Ja, om uppdraget medger hybridupplägg." },
+
+  // GDPR
+  { q:"Följer ni GDPR?", a:"Ja. Vi hanterar personuppgifter lagligt, säkert och med minimal insamling." },
+  { q:"Hur raderar jag min data?", a:"Kontakta support eller begär radering i kontoinställningar – vi hjälper dig direkt." },
+  { q:"Hur hanterar ni journaluppgifter?", a:"Journaldata ska inte delas i chatten. Använd vårdgivarens säkra system för patientinformation." },
+
+  // TEKNIK & SUPPORT
+  { q:"Får ni driftstörningar ibland?", a:"Som alla digitala tjänster kan det hända. Vi övervakar och kommunicerar läget i appen." },
+  { q:"Hur kontaktar jag support?", a:"Skriv i chatten eller maila oss – vi svarar snabbt vardagar och bevakar kritiska ärenden." },
+  { q:"Hur rapporterar jag en bugg?", a:"Använd ”Rapportera problem” i appen och beskriv vad som hände – gärna med skärmklipp." },
+
+  // PRIS & OFFERT – VÅRDGIVARE
+  { q:"Kan vi få en snabb offert?", a:"Ja, ange kompetens, erfarenhetsnivå, plats och tidsperiod – vi återkommer samma dag." },
+  { q:"Vad ingår i priset?", a:"Matchning, digital administration, tidrapportering och kvalitetskontroller. Försäkring ligger hos vårdgivaren." },
+  { q:"Kan ni bemanna med kort varsel?", a:"Vi gör vårt bästa – akuta förfrågningar prioriteras i nätverket." },
+
+  // SKATT & MODELLER
+  { q:"Vilken skattetabell använder ni i beräkningar?", a:"Som standard schablon, men du kan ange din kommun/tabell för mer exakt resultat." },
+  { q:"Kan jag lägga till skattefria ersättningar i kalkylen?", a:"Ja, lägg till traktamente/milersättning så visas de separat utanför nettolönen." },
+  { q:"Visa mellanled i kalkylen?", a:"Självklart – efter avgift, bruttolön, skatt, semester och netto. Allt syns öppet." },
+  { q:"Kan ni jämföra AB vs lön via Curevia?", a:"Ja, vi visar en enkel jämförelse och pekar på vad som skiljer i ansvar, skatt och administration." },
+
+  // MATCHNING & KVALITET
+  { q:"Hur säkerställer ni kvalitet i matchningen?", a:"Profildata, verifierad legitimation och relevanta referenser. Vårdgivare kan sätta krav och ge feedback." },
+  { q:"Kan jag få uppdrag inom en specifik specialitet?", a:"Ja, filtrera på specialitet och lägg bevakning så pingar vi dig vid nya uppdrag." },
+  { q:"Hur funkar feedback efter avslutat uppdrag?", a:"Båda parter kan ge omdöme. Det förbättrar matchningar framåt." },
+
+  // AVSLUT & UPPFÖLJNING
+  { q:"Hur avslutar jag ett uppdrag?", a:"Rapportera sista passet och signera. Slutrapport och ersättning hanteras direkt i systemet." },
+  { q:"Kan jag få arbetsgivarintyg eller intyg på uppdrag?", a:"Ja, be support så hjälper vi dig med underlag." },
+  { q:"Hur stänger vi ett uppdrag som vårdgivare?", a:"Bekräfta sista tidrapporten och signera digitalt. Fakturan skapas enligt avtal." },
+
+  // KAMPANJER
+  { q:"Har ni någon värvningsbonus?", a:"Ibland kör vi kampanjer. Använd din inbjudningslänk och se aktuella villkor i appen." },
+  { q:"Får både jag och den jag bjuder in bonus?", a:"Ja, när kampanjvillkoren uppfylls – till exempel efter första genomförda uppdrag." },
+
+  // ÖVRIGT
+  { q:"Vad kostar det att registrera sig?", a:"Det är gratis att skapa konto. Avgifter framgår först när du accepterar uppdrag." },
+  { q:"Kan ni hjälpa till med vidareutbildning?", a:"Vi tipsar gärna om kurser och certifieringar – fråga efter förslag inom din specialitet." },
+  { q:"Var kan jag följa er?", a:"Följ oss på LinkedIn för nyheter, uppdrag och insikter." }
+];
+
+/* Nyckelknappar (pinned) */
+const PinnedFAQs = [
+  CureviaFAQs[0], CureviaFAQs[2], CureviaFAQs[11], CureviaFAQs[16], CureviaFAQs[22],
+  CureviaFAQs[28], CureviaFAQs[40], CureviaFAQs[48], CureviaFAQs[58], CureviaFAQs[69]
+];
+
+/* =========================================================
+   UI/DOM
+========================================================= */
 const log   = document.getElementById("log");
 const inp   = document.getElementById("inp");
 const btn   = document.getElementById("btn");
@@ -132,7 +276,6 @@ const cMsg    = document.getElementById("cMsg");
 const cCancel = document.getElementById("cCancel");
 const cSend   = document.getElementById("cSend");
 
-/* ===== Toast helper ===== */
 let toastTimer=null;
 function showToast(msg="Klart!", ms=2200){
   if (!toastEl) return;
@@ -141,8 +284,6 @@ function showToast(msg="Klart!", ms=2200){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> toastEl.classList.remove("show"), ms);
 }
-
-/* ===== UI helpers ===== */
 function addBubble(text, who="bot"){
   const div = document.createElement("div");
   div.className = "bubble " + (who==="me" ? "me" : "bot");
@@ -162,14 +303,11 @@ function addCopyIfLong(div){
 }
 function typingBubble(){ const b = addBubble("…","bot"); return { destroy(){ try{ b.remove(); }catch{} } }; }
 function openNewTab(url, toastMsg){
-  try {
-    window.open(url, "_blank", "noopener,noreferrer");
-    if (toastMsg) showToast(toastMsg);
-  } catch {}
+  try { window.open(url, "_blank", "noopener,noreferrer"); if (toastMsg) showToast(toastMsg); } catch {}
 }
 function firstUrlIn(text){ const m = String(text||"").match(/https?:\/\/[^\s)]+/i); return m ? m[0] : null; }
 
-/* Suggestions / Chips */
+/* ===== Chips ===== */
 let chipsBar = null;
 function clearChips(){ if(chipsBar){ try{ chipsBar.remove(); }catch{} chipsBar=null; } }
 function createChip(it){
@@ -191,7 +329,6 @@ function renderChips(items=[]){
   chipsBar = document.createElement("div");
   chipsBar.className = "chips";
   for (const it of items){ chipsBar.appendChild(createChip(it)); }
-  // lägg chips under sista bot-bubblan
   const last = [...log.querySelectorAll(".bubble.bot")].pop();
   if (last){ last.appendChild(chipsBar); }
   log.scrollTo({ top: log.scrollHeight, behavior:"smooth" });
@@ -211,17 +348,19 @@ dark.onclick = () => {
   localStorage.setItem("curevia_dark", on ? "1" : "0");
 };
 
-/* ===== Boot ===== */
+/* =========================================================
+   BOOT
+========================================================= */
 boot();
 async function boot(){
   try{
-    const r = await fetch(API, { headers: { "X-Session-Id": sessionId, "Accept-Language": navigator.language || "" }});
-    const ok = (r.headers.get("content-type")||"").toLowerCase().includes("application/json");
-    if (!ok) throw new Error("meta");
-    const meta = await r.json();
+    // Hämta meta om du vill — men vi har egna fallback-suggestions här
+    await fetch(API, { headers: { "X-Session-Id": sessionId, "Accept-Language": navigator.language || "" }}).catch(()=>{});
     addBubble("Hej! 👋 Välkommen till Curevia. Vad vill du göra?");
-    renderChips(meta.suggested || [
+    renderChips([
       { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
+      { emoji:"🧮", text:"Räkna ut nettolön", textSend:"Beräkna nettolön från faktura" },
+      { emoji:"🇳🇴", text:"Jobba i Norge",     textSend:"Hur skaffar jag norsk legitimation (HPR)?" },
       { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
       { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
       { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
@@ -232,16 +371,20 @@ async function boot(){
   }
 }
 
-/* ===== Send ===== */
+/* =========================================================
+   SEND / ROUTING (FAQ → kalkyl → Norge → GPT-fallback)
+========================================================= */
 let lastUserText = "";
 btn.onclick = ()=> send(inp.value);
 inp.addEventListener("input", () => { btn.disabled = !inp.value.trim(); });
-inp.addEventListener("keydown", e => {
-  if (e.key === "Enter"){
-    e.preventDefault();
-    if (inp.value.trim()) send(inp.value);
-  }
-});
+inp.addEventListener("keydown", e => { if (e.key === "Enter"){ e.preventDefault(); if (inp.value.trim()) send(inp.value); }});
+
+function normalize(s=""){ return s.toLowerCase().trim(); }
+function faqFindExact(text){ return CureviaFAQs.find(f => normalize(f.q) === normalize(text)); }
+function faqFindFuzzy(text){
+  const t = normalize(text);
+  return CureviaFAQs.find(f => normalize(f.q).includes(t) || normalize(f.a).includes(t));
+}
 
 async function send(text){
   if (!text || !text.trim()) return;
@@ -251,15 +394,38 @@ async function send(text){
   inp.value = "";
   btn.disabled = true;
 
-  // Snabb hantering av registreringsintention
+  // Intent: snabbregistrering
   if (handleRegistrationIntent(text)) return;
 
+  // Intent: kalkyl
+  if (/(nett|ber[aä]kna).*(faktur|l[öo]n)|fakturakalkyl/i.test(text)){
+    return handleInvoiceCalc();
+  }
+
+  // Intent: Norge/HPR
+  if (/norge|hpr|autorisa(s|z)jon|norsk legitimation/i.test(text)){
+    return handleNorwayGuide();
+  }
+
+  // FAQ – exact eller fuzzy
+  const hit = faqFindExact(text) || faqFindFuzzy(text);
+  if (hit){
+    const b = addBubble(hit.a, "bot");
+    addCopyIfLong(b);
+    return smartSuggest(lastUserText, hit.a);
+  }
+
+  // Server/GPT-fallback med streaming
+  return serverFallback(text);
+}
+
+/* =========================================================
+   SERVER (GPT-5) FALLBACK – SSE
+========================================================= */
+async function serverFallback(text){
   const bubble = addBubble("", "bot");
   const typing = typingBubble();
-  let gotAnyToken = false;
-  let finalText = "";
-  let finalSuggestions = [];
-
+  let gotAny = false, finalText = "", finalSuggestions=[];
   try {
     const r = await fetch(API + "?stream=1", {
       method: "POST",
@@ -273,14 +439,12 @@ async function send(text){
     });
 
     const ct = (r.headers.get("content-type") || "").toLowerCase();
-
     if (!ct.includes("text/event-stream")) {
       typing.destroy();
-      const safe = ct.includes("application/json");
-      if (safe) {
+      const okJson = ct.includes("application/json");
+      if (okJson){
         const data = await r.json();
         bubble.innerText = data.reply || "Tekniskt fel – prova igen.";
-        if (data.action === "open_url" && data.url) openNewTab(data.url, "Öppnade länk i ny flik");
         if (Array.isArray(data.suggestions)) finalSuggestions = data.suggestions;
       } else {
         bubble.innerText = "Tekniskt fel – prova igen.";
@@ -291,131 +455,173 @@ async function send(text){
       return;
     }
 
-    // === SSE
     const reader = r.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
-
     while (true){
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream:true });
-
       let idx;
       while ((idx = buffer.indexOf("\n\n")) >= 0) {
-        const raw = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-
+        const raw = buffer.slice(0, idx); buffer = buffer.slice(idx+2);
         const lines = raw.split(/\r?\n/);
-        let event = "message";
-        let data  = "";
-
+        let event = "message", data="";
         for (const line of lines){
           if (!line) continue;
           if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) {
-            let payload = line.slice(5);
-            if (payload.startsWith(" ")) payload = payload.slice(1);
-            data += payload;
-          }
+          else if (line.startsWith("data:")) { let p=line.slice(5); if (p.startsWith(" ")) p=p.slice(1); data += p; }
         }
         if (!data) continue;
 
-        if (event === "action") {
-          try {
-            const a = JSON.parse(data);
-            if (a?.action === "open_url" && a.url) openNewTab(a.url, "Öppnade länk i ny flik");
-            if (a?.action === "open_contact_form") openContactForm();
-          } catch {}
-          continue;
-        }
-
-        if (event === "token") {
-          if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
+        if (event === "token"){
+          if (!gotAny){ typing.destroy(); gotAny = true; }
           bubble.innerText += data; finalText += data;
           log.scrollTo({ top: log.scrollHeight });
           continue;
         }
-
-        if (event === "final") {
+        if (event === "final"){
           typing.destroy();
-          try {
+          try{
             const j = JSON.parse(data);
-            if (!gotAnyToken && j.reply) { bubble.innerText = j.reply; finalText = j.reply; }
-            if (Array.isArray(j.suggestions)) finalSuggestions = j.suggestions;
-            if (j.action === "open_contact_form") openContactForm();
-          } catch {
-            if (!gotAnyToken) { bubble.innerText = data; finalText = data; }
-          }
+            if (!gotAny && j.reply){ bubble.innerText = j.reply; finalText=j.reply; }
+            if (Array.isArray(j.suggestions)) finalSuggestions=j.suggestions;
+          }catch{ if (!gotAny){ bubble.innerText = data; finalText=data; } }
           continue;
         }
-
-        // OpenAI raw stream fallback
-        try{
-          const j = JSON.parse(data);
-          const delta = j?.choices?.[0]?.delta?.content;
-          if (delta){
-            if (!gotAnyToken) { typing.destroy(); gotAnyToken = true; }
-            bubble.innerText += delta; finalText += delta;
-          }
-        }catch{}
       }
     }
-
-    if (!gotAnyToken && !bubble.innerText) { typing.destroy(); bubble.innerText = "Inget svar – prova igen."; }
-
-    const maybeUrl = firstUrlIn(finalText);
-    if (maybeUrl && /demo|book|boka/i.test(lastUserText)) openNewTab(maybeUrl, "Öppnade bokningslänk i ny flik");
-
+    if (!gotAny && !bubble.innerText){ typing.destroy(); bubble.innerText="Inget svar – prova igen."; }
     addCopyIfLong(bubble);
-    if (finalSuggestions?.length) renderChips(finalSuggestions);
-    else smartSuggest(lastUserText, bubble.innerText);
-
-  } catch(e) {
+    if (finalSuggestions?.length) renderChips(finalSuggestions); else smartSuggest(lastUserText, bubble.innerText);
+  } catch(e){
     typing.destroy();
     addBubble("Tekniskt fel – prova igen.");
   }
 }
 
-/* ===== Smart suggestions on the client (fallback) ===== */
-const LINKS = {
-  demo:"https://calendly.com/tim-curevia/30min",
-  regConsult:"https://curevia.ai/consultant/register",
-  regProvider:"https://curevia.ai/auth?type=signup&returnTo=/employer/register"
-};
-
+/* =========================================================
+   REGISTRERING – intents
+========================================================= */
 function registrationMessage(){
   return "För att registrera dig, vänligen besök vår webbplats och följ registreringsanvisningarna. Om du behöver hjälp kan du alltid kontakta oss!";
 }
-
 function handleRegistrationIntent(userText=""){
   const t = (userText||"").toLowerCase();
-
   const isConsult = /(registrera|sign ?up|konto).*?(konsult|sjuksköters|läkar|nurse|doctor)/.test(t);
   const isProvider = /(registrera|sign ?up|konto).*?(vårdgivar|klinik|mottag|provider|clinic|hospital)/.test(t);
   const genericReg = /(registrera|sign ?up|skapa konto)/.test(t);
 
-  if (isConsult){
-    openNewTab(LINKS.regConsult, "Öppnade registreringen för vårdpersonal");
-    addBubble(registrationMessage(), "bot");
-    return true;
-  }
-  if (isProvider){
-    openNewTab(LINKS.regProvider, "Öppnade registreringen för vårdgivare");
-    addBubble(registrationMessage(), "bot");
-    return true;
-  }
+  if (isConsult){ openNewTab(LINKS.regConsult, "Öppnade registreringen för vårdpersonal"); addBubble(registrationMessage(), "bot"); return true; }
+  if (isProvider){ openNewTab(LINKS.regProvider, "Öppnade registreringen för vårdgivare"); addBubble(registrationMessage(), "bot"); return true; }
   if (genericReg){
     renderChips([
       { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
       { emoji:"🏥", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
     ]);
-    addBubble(registrationMessage(), "bot");
-    return true;
+    addBubble(registrationMessage(), "bot"); return true;
   }
   return false;
 }
 
+/* =========================================================
+   NETTOLÖNEKALKYLATOR (fakturabelopp exkl moms)
+========================================================= */
+function round(n){ return Math.round(Number(n)||0); }
+function pct(n){ return (Number(n)||0).toFixed(4); }
+
+function calcNetFromInvoice({ amountExVat, platformFeePct, agPct, taxPct, vacationPct, taxFreeSEK=0 }){
+  const efterAvgift = amountExVat * (1 - platformFeePct);
+  const brutto = efterAvgift / (1 + agPct);
+  const bruttoMedSem = brutto * (1 + vacationPct);
+  const prelimSkatt = bruttoMedSem * taxPct;
+  const netto = bruttoMedSem - prelimSkatt;
+  const totalUt = netto + taxFreeSEK;
+  return {
+    efterAvgift: round(efterAvgift),
+    bruttolön: round(brutto),
+    bruttolönMedSemester: round(bruttoMedSem),
+    preliminärSkatt: round(prelimSkatt),
+    nettolön: round(netto),
+    skattefriaErsSEK: round(taxFreeSEK),
+    nettoutbetalningTotalt: round(totalUt)
+  };
+}
+
+function handleInvoiceCalc(){
+  const beloppStr = prompt("Fakturabelopp exkl. moms (SEK)?", "100000");
+  const belopp = Number(beloppStr||"");
+  if (!belopp || belopp <= 0){ addBubble("Okej! Säg till det exakta beloppet så räknar jag.", "bot"); return; }
+
+  // Parametrar (kan göras justerbara vid behov)
+  const platformFeePct = DEFAULTS.platformFeePct;
+  const agPct = DEFAULTS.agPct;
+  const taxPct = DEFAULTS.taxPct;
+  const vacationPct = DEFAULTS.vacationPct;
+  const taxFreeSEK = 0;
+
+  const r = calcNetFromInvoice({ amountExVat: belopp, platformFeePct, agPct, taxPct, vacationPct, taxFreeSEK });
+  const out =
+`Här är din uppskattning:
+• Efter avgift (${(platformFeePct*100).toFixed(1)}%): ${r.efterAvgift.toLocaleString()} kr
+• Bruttolön: ${r.bruttolön.toLocaleString()} kr
+• Bruttolön inkl. semester (${(vacationPct*100).toFixed(0)}%): ${r.bruttolönMedSemester.toLocaleString()} kr
+• Preliminär skatt (${(taxPct*100).toFixed(0)}%): −${r.preliminärSkatt.toLocaleString()} kr
+• Nettolön: ${r.nettolön.toLocaleString()} kr
+• Skattefria ersättningar: +${r.skattefriaErsSEK.toLocaleString()} kr
+= Utbetalning totalt: ${r.nettoutbetalningTotalt.toLocaleString()} kr
+
+Vill du finjustera med din skattetabell eller jämföra mot fakturering via eget AB?`;
+  const b = addBubble(out, "bot"); addCopyIfLong(b);
+  renderChips([
+    { emoji:"🧮", text:"Räkna igen med annat belopp", textSend:"Beräkna nettolön från faktura" },
+    { emoji:"📎", text:"Lägg till traktamente/mil", textSend:"Lägg till skattefria ersättningar i kalkylen" }
+  ]);
+}
+
+/* =========================================================
+   NORGE – AUTORISASJON (HPR) GUIDE
+========================================================= */
+function handleNorwayGuide(){
+  const guide =
+`Så skaffar du norsk legitimation (HPR) – steg för steg:
+
+1) Förbered dokument
+   • Pass/id, examensbevis, svensk legitimation, CV.
+   • Certificate of Current Professional Status/”Letter of Good Standing”.
+   • Auktoriserade översättningar om dokument ej på norska/svenska/engelska.
+
+2) Ansök om autorisasjon
+   • Ansökan görs digitalt via Helsedirektoratet (HPR).
+   • Skapa konto, ladda upp dokument, betala avgift.
+   • Handläggningstid varierar – räkna med några veckor.
+
+3) Efter beslut – HPR-nummer
+   • Vid beviljad autorisasjon registreras du i HPR (Norges legitimation).
+   • Du får HPR-nummer som arbetsgivare/vårdgivare kontrollerar.
+
+4) Praktiska steg för arbete i Norge
+   • D-nummer (tillfälligt personnummer) via Skatteetaten.
+   • Skattekort (tax card) – krävs för lön.
+   • Norsk bank/utbetalning enligt arbetsgivarens rutiner.
+   • Eventuellt HMS-kort och lokala intro-/IT-behörigheter.
+
+Tips:
+• Spara alla original och ha skannade PDF:er redo (hög kvalitet).
+• Kolla krav per yrkeskategori – vissa specialiteter kräver extra intyg.
+• Behöver du intyg från Sverige (good standing)? Beställ i god tid.
+
+Vill du att jag gör en checklista anpassad för din yrkesroll och situation?`;
+  const b = addBubble(guide, "bot"); addCopyIfLong(b);
+  renderChips([
+    { emoji:"✅", text:"Skapa personlig checklista", textSend:"Skapa norsk legitimation-checklista åt mig" },
+    { emoji:"📎", text:"Vilka intyg saknar jag?", textSend:"Hjälp mig lista intyg och översättningar" }
+  ]);
+}
+
+/* =========================================================
+   SMART SUGGESTIONS (fallback)
+========================================================= */
 function smartSuggest(userText="", botText=""){
   const t = (userText||"").toLowerCase();
   const isProv = /(vårdgivar|klinik|mottag|provider|clinic|hospital)/.test(t);
@@ -428,20 +634,20 @@ function smartSuggest(userText="", botText=""){
     { emoji:"🏥", text:"Registrera – Vårdgivare", url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
   ]);
   if (isCons) return renderChips([
-    { emoji:"💬", text:"Vanliga frågor",    textSend:"Vanliga frågor för konsulter" },
-    { emoji:"📅", text:"Boka demo",         url:LINKS.demo, toast:"Öppnade demo-bokning i ny flik" },
+    { emoji:"🧮", text:"Räkna ut nettolön", textSend:"Beräkna nettolön från faktura" },
+    { emoji:"🇳🇴", text:"Jobba i Norge",     textSend:"Hur skaffar jag norsk legitimation (HPR)?" },
     { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" }
   ]);
   return renderChips([
     { emoji:"ℹ️", text:"Om Curevia",        textSend:"Berätta mer om Curevia" },
-    { emoji:"🏥", text:"För vårdgivare",    textSend:"Vad erbjuder ni för vårdgivare?" },
-    { emoji:"👩‍⚕️", text:"För vårdpersonal", textSend:"Vad erbjuder ni för vårdpersonal?" },
-    { emoji:"🚀", text:"Registrera – Vårdpersonal", url:LINKS.regConsult, toast:"Öppnade registreringen för vårdpersonal" },
-    { emoji:"🧷", text:"Registrera – Vårdgivare",   url:LINKS.regProvider, toast:"Öppnade registreringen för vårdgivare" }
+    { emoji:"🧮", text:"Räkna ut nettolön", textSend:"Beräkna nettolön från faktura" },
+    { emoji:"🇳🇴", text:"Jobba i Norge",     textSend:"Hur skaffar jag norsk legitimation (HPR)?" }
   ]);
 }
 
-/* ===== Contact modal ===== */
+/* =========================================================
+   CONTACT FORM
+========================================================= */
 function openContactForm(){ modalBg.style.display = "flex"; cName.focus(); }
 function closeContactForm(){ modalBg.style.display = "none"; }
 cCancel.onclick = closeContactForm;
@@ -465,6 +671,24 @@ cSend.onclick = async () => {
     addBubble("Kunde inte skicka just nu – prova igen.");
   }
 };
+
+/* =========================================================
+   FINAL: be om filer/underlag för att göra boten komplett
+========================================================= */
+setTimeout(() => {
+  const need =
+`För att göra boten komplett – kan du dela följande filer/underlag?
+• Exakt plattformsavgift (%), ev. nivåer per kompetens.
+• Policy/avtalstexter (PDF/URL) för: ersättningar, OB, semester, sjuklön.
+• Textmallar för: registrering, dataskydd/GDPR, support.
+• Lista över kompetenser/specialiteter ni erbjuder (CSV/JSON).
+• Eventuella skattetabeller/schabloner per kommun (om ni vill vara exakta).
+• Processbeskrivning (PDF/URL) om hur ni vill att norsk autorisasjon ska presenteras.
+• Logotyper/brand (SVG/PNG) + tonalitetsguide.
+
+Lägg dem i repo (/public/content) eller ge mig länkar, så kopplar jag in dem.`;
+  const b = addBubble(need, "bot"); addCopyIfLong(b);
+}, 8000);
 </script>
 </body>
 </html>
